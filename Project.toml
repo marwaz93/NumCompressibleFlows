@@ -1,0 +1,22 @@
+name = "NumCompressibleFlows"
+uuid = "21fb45a5-abb4-49e7-b369-006a31dfd227"
+authors = ["Marwa Zainelabdeen <marwa@wias-berlin.de>, Christian Merdon <merdon@wias-berlin.de>"]
+version = "0.1.0"
+
+[deps]
+ExtendableFEM = "a722555e-65e0-4074-a036-ca7ce79a4aed"
+ExtendableGrids = "cfc395e8-590f-11e8-1f13-43a2532b2fa8"
+GridVisualize = "5eed8a63-0fb0-45eb-886d-8d5a387d12b8"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SimplexGridFactory = "57bfcd06-606e-45d6-baf4-4ba06da0efd5"
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
+Triangulate = "f7e6ffb2-c36d-4f8f-a77e-16e897189344"
+
+[compat]
+ExtendableFEM = "0.8.1"
+ExtendableGrids = "1.12.0"
+GridVisualize = "1.10.0"
+LinearAlgebra = "1.11.0"
+SimplexGridFactory = "2.4.0"
+Symbolics = "5.36.0"
+Triangulate = "2.4.0"
