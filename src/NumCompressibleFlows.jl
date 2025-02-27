@@ -10,6 +10,10 @@ using LinearAlgebra
 #using Test #hide
 using DrWatson
 
+# global Symbolics variables for definition of exact solutions
+@variables x y z t
+
+
 include("kernels.jl")
 export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos_powerlaw! # these functions  change the input data
 

@@ -13,24 +13,34 @@ function main(;
     nrefs = 4,
     M = 1,
     c = 1,
-    ufac = 100,
+    μ = 1,
+    λ = -2*μ / 3,
+    ufac = 1,
+    τfac = 1,
+    order = 1,
     pressure_stab = 0,
-    laplacian_in_rhs = false, # for data in testcase 2 and 3
-    Akbas_example=1, # Akbas_example ==1 or 2 for examples in Akbas et al. with testcase=3
+    laplacian_in_rhs = true, # for data in testcase 2 and 3
+    problem = ExponentialDensity,
+    gridtype = Mountain2D,
     maxsteps = 5000,
     target_residual = 1.0e-11,
     Plotter = nothing,
     reconstruct = true,
-    μ = 1,
-    λ = -2*μ / 3,
-    order = 1,
     γ=1,
     kwargs...
 )
 
 ## load data for testcase
-grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
-xgrid = grid_builder(nrefs)
+#grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
+ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(problem; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
+
+
+xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
+M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) # e^(-y/c_M)/ M 
+M = M_exact
+τ = μ / (4*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+@info "M = $M, τ = $τ"
+sleep(1)
 
 ## define unknowns
 u = Unknown("u"; name = "velocity", dim = 2)
@@ -63,7 +73,6 @@ end
 assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = 3 * order, kwargs...))
 
 ## FVM for continuity equation
-τ = μ / (c*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
 @info "timestep = $τ"
 PDT = ProblemDescription("continuity equation")
 assign_unknown!(PDT, ϱ)
@@ -89,7 +98,7 @@ sol = nothing
 xgrid = nothing
 op_upwind = 0
 for lvl in 1:nrefs
-    xgrid = grid_builder(lvl)
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = lvl)
     @show xgrid
     FES = [FESpace{FETypes[j]}(xgrid) for j in 1:3] # 3 because we have dim(FETypes)=3
     sol = FEVector(FES; tags = [u, ϱ, p]) # create solution vector and tag blocks with the unknowns (u,ρ,p) that has the same order as FETypes
@@ -119,12 +128,12 @@ end
 
 
 ## plot
-plt = GridVisualizer(; Plotter = Plotter, layout = (1, 1), clear = true, size = (1000, 1000))
-#scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
-#vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
-#scalarplot!(plt[2, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
-#plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
-plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
+plt = GridVisualizer(; Plotter = Plotter, layout = (2, 2), clear = true, size = (1000, 1000))
+scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
+vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
+scalarplot!(plt[2, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
+plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
+#plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 #gridplot!(plt[2, 2], xgrid)
 
 Plotter.savefig("Testcase=$(testcase)_AkbasExample=$(Akbas_example)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_γ=$(γ)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")

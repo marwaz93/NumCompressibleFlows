@@ -10,8 +10,6 @@ abstract type Mountain2D <: GridFamily end
 abstract type UniformUnitSquare <:GridFamily end
 abstract type UnstructuredUnitSquare <: GridFamily end
 
-
-
 function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
     grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
             Triangulate;
@@ -22,7 +20,7 @@ function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
             regionnumbers = [1],
             regionvolumes = [4.0^-(nref) / 2]
         )
-    return grid_builder(3)
+    return grid_builder(nref)
 end
 
 function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
@@ -35,7 +33,7 @@ function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
             regionnumbers = [1],
             regionvolumes = [4.0^-(nref) / 2]
         )
-    return grid_builder(3)
+    return grid_builder(nref)
 end
 
 function load_testcase_data(testcase::Int = 1; laplacian_in_rhs = true,Akbas_example=1, M = 1, c = 1, μ = 1,γ=1,λ = -2*μ / 3, ufac = 100)
@@ -123,10 +121,10 @@ function load_testcase_data(testcase::Int = 1; laplacian_in_rhs = true,Akbas_exa
 end
 
 
-function prepare_data(::Type{<:ExponentialDensity}; kwargs...)
-    ξ = x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
-    ρ = exp(-x^3 / (3 * c)) / M
-    prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
+function prepare_data(::Type{<:ExponentialDensity}; ufac = 1, c=1, M=1, kwargs...)
+    ξ = 0 #x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
+    ρ = exp(- y / c) / M
+    return prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
 end
 function prepare_data(::Type{<:LinearDensity}; kwargs...)
     ϱ = ( 1+(x-(1/2))/c )/M 
@@ -137,10 +135,11 @@ function prepare_data(::Type{<:LinearDensity}; kwargs...)
     elseif Akbas_example==2
         ξ = 0
     end
-    prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
+    return prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
 end
 
-function prepare_data_main(; ξ = ξ, ρ = ρ, M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
+function prepare_data_main(; ξ = nothing, ϱ = y, M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
+
     ∇ξ = Symbolics.gradient(ξ, [x, y])
 
     ## velocity u = curl ξ / ϱ
@@ -172,13 +171,23 @@ function prepare_data_main(; ξ = ξ, ρ = ρ, M = 1, c = 1, μ = 1, ufac = 100,
     #Δu = Symbolics.derivative(∇u[1,1], [x]) + Symbolics.derivative(∇u[2,2], [y])
 
     ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
-    u_eval = build_function(u, x, y, expression = Val{false})
-    ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})
-    g_eval = build_function(g, x, y, expression = Val{false})
-    f_eval = build_function(f, x, y, expression = Val{false})
+    u_eval = build_function(u, x, y, expression = Val{false})[2]
+    ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})[2]
+    g_eval = build_function(g, x, y, expression = Val{false})[2]
+    f_eval = build_function(f, x, y, expression = Val{false})[2]
 
-    return ϱ_eval, g_eval[2], f == 0 ? nothing : f_eval[2], u_eval[2], ∇u_eval[2]
-    
+    ϱ!(result, qpinfo) = (result[1] = ϱ_eval(qpinfo.x[1], qpinfo.x[2]);)
+    function kernel_gravity!(result, input, qpinfo)
+        g_eval(result, qpinfo.x[1], qpinfo.x[2]) # qpinfo.x[1] is x and qpinfo.x[2] is y
+        return result .*= input[1] # input is [id_u], [id(ϱ)] ??
+    end
+    function kernel_rhs!(result, qpinfo)
+        return f_eval(result, qpinfo.x[1], qpinfo.x[2])
+    end
+
+    u!(result, qpinfo) = (u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
+    ∇u!(result, qpinfo) = (∇u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
+    return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!
 end
 
 
