@@ -43,3 +43,7 @@ end
 function energy_kernel!(result, u, qpinfo)
     return result[1] = dot(u, u) / 2
 end
+
+function eos_powerlaw!(result, input, qpinfo)
+    return result[1] = input[1]^qpinfo.params[1]
+end
