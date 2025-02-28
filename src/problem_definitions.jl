@@ -32,9 +32,9 @@ end
 function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
     grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
             Triangulate;
-            points = [0 0; 0.2 0; 0.3 0.2; 0.45 0.05; 0.55 0.35; 0.65 0.2; 0.7 0.3; 0.8 0; 1 0; 1 1 ; 0 1]',
-            bfaces = [1 2; 2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11; 11 1]',
-            bfaceregions = ones(Int, 11),
+            points = [0 0; 1.0 0; 1.0 1.0; 0.0 1.0]',
+            bfaces = [1 2; 2 3; 3 4; 4 1]',
+            bfaceregions = ones(Int, 4),
             regionpoints = [0.5 0.5;]',
             regionnumbers = [1],
             regionvolumes = [4.0^-(nref) / 2]
@@ -44,7 +44,7 @@ end
 
 
 streamfunction(::Type{<:ZeroVelocity}; kwargs...) = 0*x
-streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = 0*x^2 * y^2 * (x - 1)^2 * (y - 1)^2
+streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 
 density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y / c) / M
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 

@@ -14,7 +14,7 @@ using DrWatson
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexDensity, ZeroVelocity
+export TestVelocity, P7VortexVelocity, ZeroVelocity
 export TestDensity, ExponentialDensity, LinearDensity
 export EOSType, IdealGasLaw, PowerLaw
 export GridFamily, Mountain2D, UnstructuredUnitSquare, UniformUnitSquare
