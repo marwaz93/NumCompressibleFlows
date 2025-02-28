@@ -44,6 +44,17 @@ function energy_kernel!(result, u, qpinfo)
     return result[1] = dot(u, u) / 2
 end
 
-function eos_powerlaw!(result, input, qpinfo)
-    return result[1] = input[1]^qpinfo.params[1]
+function eos!(::Type{<:IdealGasLaw}; kawrgs...)
+    function eos_idealgas!(result, input, qpinfo)
+        return result[1] = input[1]
+    end
+    return eos_idealgas!
+end
+
+
+function eos!(::Type{<:PowerLaw{γ}}; kawrgs...) where {γ}
+    function eos_powerlaw!(result, input, qpinfo)
+        return result[1] = input[1]^γ
+    end
+    return eos_powerlaw!
 end

@@ -1,9 +1,18 @@
 # testcase 3 added by Marwa
 
 
-abstract type TestProblem end
-abstract type ExponentialDensity <: TestProblem end
-abstract type LinearDensity <: TestProblem end
+abstract type TestDensity end
+abstract type ExponentialDensity <: TestDensity end
+abstract type LinearDensity <: TestDensity end
+
+abstract type TestVelocity end
+abstract type ZeroVelocity <: TestVelocity end
+abstract type P7VortexVelocity <: TestVelocity end
+
+abstract type EOSType end
+abstract type IdealGasLaw <: EOSType end
+abstract type PowerLaw{γ} <: EOSType end
+
 
 abstract type GridFamily end
 abstract type Mountain2D <: GridFamily end
@@ -121,25 +130,20 @@ function load_testcase_data(testcase::Int = 1; laplacian_in_rhs = true,Akbas_exa
 end
 
 
-function prepare_data(::Type{<:ExponentialDensity}; ufac = 1, c=1, M=1, kwargs...)
-    ξ = 0 #x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
-    ρ = exp(- y / c) / M
-    return prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
-end
-function prepare_data(::Type{<:LinearDensity}; kwargs...)
-    ϱ = ( 1+(x-(1/2))/c )/M 
-    p = c * ϱ^γ
+streamfunction(::Type{<:ZeroVelocity}; kwargs...) = 0*x
+streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = 0*x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 
-    if Akbas_example==1
-        ξ = x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
-    elseif Akbas_example==2
-        ξ = 0
-    end
-    return prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
-end
+density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y / c) / M
+density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
-function prepare_data_main(; ξ = nothing, ϱ = y, M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
 
+function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
+
+    ## get stream function and density for test types
+    ξ = streamfunction(TVT; kwargs...)
+    ϱ = density(TDT; kwargs...)
+    
+    ## gradient of stream function
     ∇ξ = Symbolics.gradient(ξ, [x, y])
 
     ## velocity u = curl ξ / ϱ
@@ -155,16 +159,20 @@ function prepare_data_main(; ξ = nothing, ϱ = y, M = 1, c = 1, μ = 1, ufac = 
         (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
     ]
 
+    if EOSType <: IdealGasLaw
+        g = c * Symbolics.gradient(log(ϱ), [x, y])
+    elseif EOSType <: PowerLaw
+        γ = EOSType.parameters[1]
+        @assert γ > 1
+        g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y])
+    end
 
     ## gravity ϱg = - Δu + ϱ∇log(ϱ)
-
     if laplacian_in_rhs
         f = - μ * Δu
-        g = c * Symbolics.gradient(log(ϱ), [x, y])
-
         # Marwa therfore, /gradient p = c * /rho * /gradient /psi 
     else
-        g = - μ * Δu / ϱ + c * Symbolics.gradient(log(ϱ), [x, y])
+        g -= - μ * Δu / ϱ
         f = 0
     end
 

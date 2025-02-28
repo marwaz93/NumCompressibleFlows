@@ -20,7 +20,9 @@ function main(;
     order = 1,
     pressure_stab = 0,
     laplacian_in_rhs = true, # for data in testcase 2 and 3
-    problem = ExponentialDensity,
+    velocitytype = ZeroVelocity,
+    densitytype = ExponentialDensity,
+    eostype = IdealGasLaw,
     gridtype = Mountain2D,
     maxsteps = 5000,
     target_residual = 1.0e-11,
@@ -32,7 +34,7 @@ function main(;
 
 ## load data for testcase
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
-ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(problem; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
+ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
 
 
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
@@ -65,7 +67,7 @@ PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
 assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
-assign_operator!(PD, LinearOperator([div(u)], [id(ϱ)]; factor = c, kwargs...)) 
+assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...)) 
 assign_operator!(PD, HomogeneousBoundaryData(u; regions = 1:4, kwargs...))
 if kernel_rhs! !== nothing
     assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = 3 * order, kwargs...))
