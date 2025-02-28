@@ -1,42 +1,7 @@
 # testcase 3 added by Marwa
 
 
-abstract type TestProblem end
-abstract type ExponentialDensity <: TestProblem end
-abstract type LinearDensity <: TestProblem end
 
-abstract type GridFamily end
-abstract type Mountain2D <: GridFamily end
-abstract type UniformUnitSquare <:GridFamily end
-abstract type UnstructuredUnitSquare <: GridFamily end
-
-
-
-function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
-    grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
-            Triangulate;
-            points = [0 0; 0.2 0; 0.3 0.2; 0.45 0.05; 0.55 0.35; 0.65 0.2; 0.7 0.3; 0.8 0; 1 0; 1 1 ; 0 1]',
-            bfaces = [1 2; 2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11; 11 1]',
-            bfaceregions = ones(Int, 11),
-            regionpoints = [0.5 0.5;]',
-            regionnumbers = [1],
-            regionvolumes = [4.0^-(nref) / 2]
-        )
-    return grid_builder(3)
-end
-
-function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
-    grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
-            Triangulate;
-            points = [0 0; 0.2 0; 0.3 0.2; 0.45 0.05; 0.55 0.35; 0.65 0.2; 0.7 0.3; 0.8 0; 1 0; 1 1 ; 0 1]',
-            bfaces = [1 2; 2 3; 3 4; 4 5; 5 6; 6 7; 7 8; 8 9; 9 10; 10 11; 11 1]',
-            bfaceregions = ones(Int, 11),
-            regionpoints = [0.5 0.5;]',
-            regionnumbers = [1],
-            regionvolumes = [4.0^-(nref) / 2]
-        )
-    return grid_builder(3)
-end
 
 function load_testcase_data(testcase::Int = 1; laplacian_in_rhs = true,Akbas_example=1, M = 1, c = 1, μ = 1,γ=1,λ = -2*μ / 3, ufac = 100)
     if testcase == 1
@@ -122,64 +87,6 @@ function load_testcase_data(testcase::Int = 1; laplacian_in_rhs = true,Akbas_exa
     end
 end
 
-
-function prepare_data(::Type{<:ExponentialDensity}; kwargs...)
-    ξ = x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
-    ρ = exp(-x^3 / (3 * c)) / M
-    prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
-end
-function prepare_data(::Type{<:LinearDensity}; kwargs...)
-    ϱ = ( 1+(x-(1/2))/c )/M 
-    p = c * ϱ^γ
-
-    if Akbas_example==1
-        ξ = x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * ufac
-    elseif Akbas_example==2
-        ξ = 0
-    end
-    prepare_data_main(; ξ = ξ, ρ = ρ, kwargs...)
-end
-
-function prepare_data_main(; ξ = ξ, ρ = ρ, M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
-    ∇ξ = Symbolics.gradient(ξ, [x, y])
-
-    ## velocity u = curl ξ / ϱ
-    u = [-∇ξ[2], ∇ξ[1]] ./ ϱ
-
-    ## gradient of velocity
-    ∇u = Symbolics.jacobian(u, [x, y])
-    ∇u_reshaped = [∇u[1, 1], ∇u[1, 2], ∇u[2, 1], ∇u[2, 2]]
-
-    ## Laplacian
-    Δu = [
-        (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[1, 2], [y]))[1],
-        (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
-    ]
-
-
-    ## gravity ϱg = - Δu + ϱ∇log(ϱ)
-
-    if laplacian_in_rhs
-        f = - μ * Δu
-        g = c * Symbolics.gradient(log(ϱ), [x, y])
-
-        # Marwa therfore, /gradient p = c * /rho * /gradient /psi 
-    else
-        g = - μ * Δu / ϱ + c * Symbolics.gradient(log(ϱ), [x, y])
-        f = 0
-    end
-
-    #Δu = Symbolics.derivative(∇u[1,1], [x]) + Symbolics.derivative(∇u[2,2], [y])
-
-    ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
-    u_eval = build_function(u, x, y, expression = Val{false})
-    ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})
-    g_eval = build_function(g, x, y, expression = Val{false})
-    f_eval = build_function(f, x, y, expression = Val{false})
-
-    return ϱ_eval, g_eval[2], f == 0 ? nothing : f_eval[2], u_eval[2], ∇u_eval[2]
-    
-end
 
 
 
