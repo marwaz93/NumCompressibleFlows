@@ -184,10 +184,13 @@ function prepare_data3!(;Akbas_example=1, M = 1, c = 1, μ = 1, γ=1,λ = -2*μ 
             f =  c* γ*ϱ^(γ-1) * Symbolics.gradient(ϱ, [x, y])
             g = 0 * Symbolics.gradient(0, [x, y])
             @show g 
+            # also laplacian term missing 
         else
             # Marwa therfore, /gradient p = c * /rho * /gradient /psi
             g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y])
             f = 0
+
+            # i think this case is wrong in my code, we miss the laplacian term
         end
     end
     ϱ_eval = build_function(ϱ, x, y, expression = Val{false})

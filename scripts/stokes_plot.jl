@@ -9,7 +9,6 @@ using LinearAlgebra
 #using Test #hide
 
 function main(;
-    testcase = 1, # testcase = 1, 2 or 3
     nrefs = 4,
     M = 1,
     c = 1,
@@ -19,7 +18,7 @@ function main(;
     τfac = 1,
     order = 1,
     pressure_stab = 0,
-    laplacian_in_rhs = true, # for data in testcase 2 and 3
+    laplacian_in_rhs = true, 
     velocitytype = ZeroVelocity,
     densitytype = ExponentialDensity,
     eostype = IdealGasLaw,
@@ -34,7 +33,7 @@ function main(;
 
 ## load data for testcase
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
-ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
+ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac)
 
 
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
@@ -136,9 +135,9 @@ vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rast
 scalarplot!(plt[2, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
 plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
-#gridplot!(plt[2, 2], xgrid)
+gridplot!(plt[2, 2], xgrid)
 
-Plotter.savefig("Testcase=$(testcase)_AkbasExample=$(Akbas_example)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_γ=$(γ)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")
+Plotter.savefig("velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype)_gird=$(gridtype)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_γ=$(γ)_λ=$(λ)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")
 #Plotter.savefig("Plots/GridPlot_testcase=$(testcase)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")
 
 

@@ -46,11 +46,12 @@ end
 streamfunction(::Type{<:ZeroVelocity}; kwargs...) = 0*x
 streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 
-density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y / c) / M
+density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y^3 / 3 * c) / M 
+# density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M # Objection: whrere is x^3 ?
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
 
-function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, kwargs...)
+function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, λ = -2*μ / 3, kwargs...)
 
     ## get stream function and density for test types
     ξ = streamfunction(TVT; kwargs...)
@@ -72,22 +73,29 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
     ]
 
+    ∇divu = [
+        (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[2, 2], [x]))[1],
+        (Symbolics.gradient(∇u[1, 1], [y]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
+    ]
+
     if EOSType <: IdealGasLaw
         g = c * Symbolics.gradient(log(ϱ), [x, y])
     elseif EOSType <: PowerLaw
         γ = EOSType.parameters[1]
         @assert γ > 1
-        g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y])
+        g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # testing welll-balance
     end
 
     ## gravity ϱg = - Δu + ϱ∇log(ϱ)
-    if laplacian_in_rhs
-        f = - μ * Δu
-        # Marwa therfore, /gradient p = c * /rho * /gradient /psi 
+    if laplacian_in_rhs # I think that these cases are equivalent, or ?
+        f = - μ * Δu  - λ*∇divu   # Objection: where is the Divergence ? 
+        
     else
-        g -= - μ * Δu / ϱ
+        g -= - μ * Δu / ϱ  - λ*∇divu / ϱ
         f = 0
     end
+
+    
 
     #Δu = Symbolics.derivative(∇u[1,1], [x]) + Symbolics.derivative(∇u[2,2], [y])
 
