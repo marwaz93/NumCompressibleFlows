@@ -252,6 +252,7 @@ function run_single(data; kwargs...)
 
     ## load data for testcase
     grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ, λ=λ, γ=γ, ufac = ufac)
+
     xgrid = grid_builder(nrefs)
 
     ## define unknowns

@@ -8,13 +8,94 @@ using Symbolics
 using LinearAlgebra
 #using Test #hide
 
+# new packages
+using DrWatson
+using JLD2
+using LaTeXStrings
+using Colors
+using ColorTypes
+#gr()
+
+quickactivate(@__DIR__, "NumCompressibleFlows")
+mkpath(plotsdir("compressible_stokes/convegence_history"))
+
+default_args = Dict(
+    # problem parameters
+    "μ" => 1,
+    "λ" => 0,
+    "γ" => 1,
+    "c" => 1,
+    "M" => 1,
+    # solving options
+    "τfac" => 1,
+    "ufac" => 1000,
+    "nrefs" => 1,
+    "order" => 1,
+    "pressure_stab" => 0,
+    "maxsteps" => 5000,
+    "target_residual" => 1.0e-11,
+    "reconstruct" => true,
+    # data of the problem
+    "velocitytype" => ZeroVelocity,
+    "densitytype" => ExponentialDensity,
+    "eostype" => IdealGasLaw,
+    "gridtype" => Mountain2D,
+    "laplacian_in_rhs" => true,
+)
+
+function load_data(; kwargs...)
+    data = deepcopy(default_args) 
+    for (k,v) in kwargs 
+        data[String(k)] = v 
+    end
+    return data
+end
+
+
+function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, kwargs...)
+
+    data = load_data(; kwargs...)
+    @show data
+    Results = zeros(Float64, length(nrefs), 5)
+    NDoFs = zeros(Float64, length(nrefs))
+
+    for lvl in nrefs
+        data["nrefs"] = lvl
+        data, ~ = produce_or_load(run_single, data, filename = filename, force = force)
+        NDoFs[lvl] = data["ndofs"]
+        Results[lvl,1] = data["Error(L2,u)"]
+        Results[lvl,2] = data["Error(H1,u)"] 
+        Results[lvl,3] = data["Error(L2,ϱ)"]
+        Results[lvl,4] = data["Error(L2,ϱu)"]
+        Results[lvl,5] = data["nits"]
+
+        print_convergencehistory(NDoFs[1:lvl], Results[1:lvl, :]; X_to_h = X -> X .^ (-1 / 2), ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"], xlabel = "ndof")
+    end
+
+    ## plot
+    #Plotter.rc("font", size=20)
+    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
+    xticks = [10,1e2,1e3,1e4,1e5]
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
+    Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
+    Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
+    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
+    Plotter.plot!(NDoFs, 200*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
+    Plotter.plot!(NDoFs, 200*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+    Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
+    
+    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "ndofs",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    ## save
+    Plotter.savefig("Aconvegence_history.png")
+end
 function main(;
     nrefs = 4,
     M = 1,
     c = 1,
     μ = 1,
-    λ = -2*μ / 3,
-    ufac = 1,
+    λ = 0,
+    ufac = 1000,
     τfac = 1,
     order = 1,
     pressure_stab = 0,
@@ -37,9 +118,10 @@ function main(;
 
 
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
-M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) # e^(-y/c_M)/ M 
+M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
 M = M_exact
-τ = μ / (4*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+ τ = μ / (c*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+ #τ = μ / (4*order^2 * M * sqrt(τfac)) 
 @info "M = $M, τ = $τ"
 sleep(1)
 
@@ -137,8 +219,8 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 gridplot!(plt[2, 2], xgrid)
 
-Plotter.savefig("velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype)_gird=$(gridtype)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_γ=$(γ)_λ=$(λ)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")
-#Plotter.savefig("Plots/GridPlot_testcase=$(testcase)_fExists?$(laplacian_in_rhs)_reconstruct=$(reconstruct)_M=$(M)_order=$(order)_μ=$(μ)_cM=$(c).png")
+Plotter.savefig("Aμ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_fExists?$(laplacian_in_rhs)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype)_gird=$(gridtype).png")
+
 
 
 return Results, plt

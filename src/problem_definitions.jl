@@ -13,7 +13,7 @@ abstract type PowerLaw{γ} <: EOSType end
 
 abstract type GridFamily end
 abstract type Mountain2D <: GridFamily end
-abstract type UniformUnitSquare <:GridFamily end
+abstract type UniformUnitSquare <:GridFamily end # no grid function yet
 abstract type UnstructuredUnitSquare <: GridFamily end
 
 function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
@@ -46,8 +46,8 @@ end
 streamfunction(::Type{<:ZeroVelocity}; kwargs...) = 0*x
 streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 
-density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y^3 / 3 * c) / M 
-# density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M # Objection: whrere is x^3 ?
+#density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y^3 / 3 * c) / M 
+density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M  # e^(-y/c_M)/ M  ... Objection: whrere is x^3 ?
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
 
@@ -92,7 +92,7 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         
     else
         g -= - μ * Δu / ϱ  - λ*∇divu / ϱ
-        f = 0
+        f = 0 * Δu 
     end
 
     
@@ -108,7 +108,7 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
     ϱ!(result, qpinfo) = (result[1] = ϱ_eval(qpinfo.x[1], qpinfo.x[2]);)
     function kernel_gravity!(result, input, qpinfo)
         g_eval(result, qpinfo.x[1], qpinfo.x[2]) # qpinfo.x[1] is x and qpinfo.x[2] is y
-        return result .*= input[1] # input is [id_u], [id(ϱ)] ??
+        return result .*= input[1] # what does it mean ?
     end
     function kernel_rhs!(result, qpinfo)
         return f_eval(result, qpinfo.x[1], qpinfo.x[2])
@@ -117,4 +117,156 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
     u!(result, qpinfo) = (u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
     ∇u!(result, qpinfo) = (∇u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
     return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!
+end
+
+
+function filename(data)
+    # problem parameters
+    μ = data["μ"]
+    λ = data["λ"]
+    γ = data["γ"]
+    c = data["c"]
+    M = data["M"]
+    # solving options
+    τfac = data["τfac"]
+    ufac = data["ufac"]
+    nrefs = data["nrefs"]
+    order = data["order"]
+    reconstruct = data["reconstruct"]
+    target_residual = data["target_residual"]
+    maxsteps = data["maxsteps"]
+    pressure_stab = data["pressure_stab"]
+    # data of the problem
+    velocitytype = data["velocitytype"]
+    densitytype = data["densitytype"]
+    eostype = data["eostype"]
+    gridtype = data["gridtype"]
+    laplacian_in_rhs = data["laplacian_in_rhs"]
+    # sname
+    sname = savename((@dict μ λ γ c M order nrefs order reconstruct target_residual maxsteps pressure_stab velocitytype densitytype eostype gridtype laplacian_in_rhs))
+    sname = "data/projects/compressible_stokes/" * sname
+    return sname
+end
+
+function run_single(data; kwargs...)
+    # problem parameters
+    μ = data["μ"]
+    λ = data["λ"]
+    γ = data["γ"]
+    c = data["c"]
+    M = data["M"]
+    # solving options
+    τfac = data["τfac"]
+    ufac = data["ufac"]
+    nrefs = data["nrefs"]
+    order = data["order"]
+    reconstruct = data["reconstruct"]
+    target_residual = data["target_residual"]
+    maxsteps = data["maxsteps"]
+    pressure_stab = data["pressure_stab"]
+    # data of the problem
+    velocitytype = data["velocitytype"]
+    densitytype = data["densitytype"]
+    eostype = data["eostype"]
+    gridtype = data["gridtype"]
+    laplacian_in_rhs = data["laplacian_in_rhs"]
+    data = Dict{String, Any}(data)
+    @show data, typeof(data)
+
+    ## load data for testcase
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac,nrefs = nrefs)
+    # added new for the type version
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+    #xgrid = grid(gridtype; nref = nrefs)
+    M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
+    M = M_exact
+    τ = μ / (c*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+    #τ = μ / (4*order^2 * M * sqrt(τfac)) 
+    @info "M = $M, τ = $τ"
+
+    ## define unknowns
+    u = Unknown("u"; name = "velocity", dim = 2)
+    ϱ = Unknown("ϱ"; name = "density", dim = 1)
+    p = Unknown("p"; name = "pressure", dim = 1)
+    ## define reconstruction operator
+    if order == 1
+        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}] # H1BR Bernardi-Raugel 2 is the dimension, L2P0 is P0 finite element
+        id_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)# if reconstruct is true call apply, if false call id
+         div_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u) # Marwa div term 
+        # RT of lowest order reconstruction 
+    elseif order == 2
+        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}] #H1P2B add additional cell bubbles, not Bernardi-Raugel? L2P1 is P1 finite element
+        id_u = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u) # RT of order 1 reconstruction
+        div_u = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u) # Marwa div term 
+        
+    end
+    ## define first sub-problem: Stokes equations to solve for velocity u
+    PD = ProblemDescription("Stokes problem")
+    assign_unknown!(PD, u)
+    assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
+    assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
+    assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...)) 
+    assign_operator!(PD, HomogeneousBoundaryData(u; regions = 1:4, kwargs...))
+    if kernel_rhs! !== nothing
+        assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = 3 * order, kwargs...))
+    end
+    assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = 3 * order, kwargs...))
+
+    ## FVM for continuity equation
+    PDT = ProblemDescription("continuity equation")
+    assign_unknown!(PDT, ϱ)
+    if order > 1
+        assign_operator!(PDT, BilinearOperator(kernel_continuity!, [grad(ϱ)], [id(ϱ)], [id(u)]; quadorder = 2 * order, factor = -1, kwargs...))
+    end
+    if pressure_stab > 0
+        psf = pressure_stab #* xgrid[CellVolumes][1]
+        assign_operator!(PDT, BilinearOperator(stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)]; entities = ON_IFACES, factor = psf, kwargs...))
+    end
+    assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...))
+    assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...))
+    assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
+    #  [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed 
+    ## prepare error calculation
+    EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
+    ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+    #NDofs = zeros(Int, nrefs)
+    #Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are 
+
+    sol = nothing
+    #xgrid = nothing
+    op_upwind = 0
+    # here we run only in one level instead of for Loop over the levels
+    FES = [FESpace{FETypes[j]}(xgrid) for j in 1:3] # 3 because we have dim(FETypes)=3
+    sol = FEVector(FES; tags = [u, ϱ, p]) # create solution vector and tag blocks with the unknowns (u,ρ,p) that has the same order as FETypes
+
+    ## initial guess
+    fill!(sol[ϱ], M) # fill block corresbonding to unknown ρ with initial value M, in Algorithm it is M/|Ω|?? We could write it as M/|Ω| and delete area from down there
+    interpolate!(sol[u], u!)
+    interpolate!(sol[ϱ], ϱ!)
+    #NDofs[lvl] = length(sol.entries)
+
+    ## solve the two problems iteratively [1] >> [2] >> [1] >> [2] ...
+    SC1 = SolverConfiguration(PD; init = sol, maxiterations = 1, target_residual = target_residual, constant_matrix = true, kwargs...)
+    SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
+    sol, nits = iterate_until_stationarity([SC1, SC2]; energy_integrator = EnergyIntegrator, maxsteps = maxsteps, init = sol, kwargs...)
+  
+
+    ## save data
+    data["ndofs"] = length(sol.entries)
+    data["solution"] = sol
+    data["grid"] = xgrid
+
+    ## calculate error
+    error = evaluate(ErrorIntegratorExact, sol)
+    data["Error(L2,u)"] = sqrt(sum(view(error, 1, :)) + sum(view(error, 2, :))) # u = (u_1,u_2)
+    data["Error(H1,u)"] = sqrt(sum(view(error, 3, :)) + sum(view(error, 4, :)) + sum(view(error, 5, :)) + sum(view(error, 6, :))) # ∇u = (∂_x u_1,∂_y u_1, ∂_x u_2, ∂_y u_2 )
+    data["Error(L2,ϱ)"] = sqrt(sum(view(error, 7, :))) # ϱ
+    data["Error(L2,ϱu)"]  = sqrt(sum(view(error, 8, :)) + sum(view(error, 9, :))) # (ρ u_1 - ρ u_2)
+    data["nits"] = nits
+
+
+    ## save to data folder
+    return data
+
+
 end

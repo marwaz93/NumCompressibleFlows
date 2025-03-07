@@ -39,7 +39,7 @@ default_args = Dict(
 
 
 function load_data(; kwargs...)
-    data = deepcopy(default_args) # initialize by default_args
+    data = deepcopy(default_args) # initialize data Dict by default_args
     for (k,v) in kwargs # if kwargs are different from default_args, change date
         data[String(k)] = v 
     end
@@ -68,7 +68,7 @@ function plot_convergencehistory(; nrefs = 1:4, Plotter = Plots, force = false, 
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-10,1e-8,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1]
+    yticks = [1e-8,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+2,1e+4,1e+6,1e+8]
     xticks = [1e2,1e3,1e4]
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
