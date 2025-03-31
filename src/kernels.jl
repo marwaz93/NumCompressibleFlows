@@ -9,6 +9,17 @@ function kernel_continuity!(result, ϱ, u, qpinfo)
     return result[2] = ϱ[1] * u[2]
 end
 
+## kernel for (uϱ, ∇λ) ON_CELLS in continuity equation
+function kernel_convection_linearoperator!(result, args, qpinfo)
+    u = view(args,1:2)
+    ∇u = view(args, 3:6)
+    ϱ = view(args, 7)
+    result[1] = ϱ[1] * dot(u, view(∇u,1:2))
+    result[2] = ϱ[1] * dot(u, view(∇u,3:4))
+    return nothing
+end
+
+
 ## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
 function kernel_upwind!(result, input, u, qpinfo)
     flux = dot(u, qpinfo.normal) # u * n

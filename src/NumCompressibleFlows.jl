@@ -23,7 +23,7 @@ export prepare_data, filename, run_single
 
 
 include("kernels.jl")
-export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos! # these functions  change the input data
+export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos!, kernel_convection_linearoperator! # these functions  change the input data
 
 
 #include("compressible_stokes.jl")

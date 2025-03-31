@@ -43,18 +43,18 @@ function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
 end
 
 
-streamfunction(::Type{<:ZeroVelocity}; kwargs...) = 0*x
-streamfunction(::Type{<:P7VortexVelocity}; kwargs...) = x^2 * y^2 * (x - 1)^2 * (y - 1)^2
+streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0* ufac *x
+streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 
 #density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y^3 / 3 * c) / M 
 density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M  # e^(-y/c_M)/ M  ... Objection: whrere is x^3 ?
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
 
-function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = true, λ = -2*μ / 3, kwargs...)
+function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 1, laplacian_in_rhs = true, pressure_in_f = false , λ = -2*μ / 3,conv_parameter = 0, kwargs...)
 
     ## get stream function and density for test types
-    ξ = streamfunction(TVT; kwargs...)
+    ξ = streamfunction(TVT;ufac = ufac, kwargs...)
     ϱ = density(TDT; kwargs...)
     
     ## gradient of stream function
@@ -72,12 +72,56 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[1, 2], [y]))[1],
         (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
     ]
-
+    ## for the λ∇(∇⋅u) term 
     ∇divu = [
         (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[2, 2], [x]))[1],
         (Symbolics.gradient(∇u[1, 1], [y]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
     ]
 
+    ## for the convection term ϱ(u ⋅∇)u
+
+    conv = conv_parameter * [ u[1] * ∇u[1, 1] + u[2] * ∇u[2, 1],
+     u[1] * ∇u[1, 2] +  u[2] * ∇u[2, 2] ] .* ϱ
+    @show conv 
+
+    # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
+    if pressure_in_f # Gradient_robustness 
+        if EOSType <: IdealGasLaw
+            f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p 
+        elseif EOSType <: PowerLaw
+            γ = EOSType.parameters[1]
+            @assert γ > 1
+            f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p 
+        end
+        if laplacian_in_rhs
+            g =  0 * Δu 
+            f -= - μ * Δu   - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
+        else
+            g = - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u)
+        end
+           
+    else # Well_balancedness 
+        if EOSType <: IdealGasLaw
+            g = c * Symbolics.gradient(log(ϱ), [x, y]) # ϱg = ∇p  
+        elseif EOSType <: PowerLaw
+            γ = EOSType.parameters[1]
+            @assert γ > 1
+            g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # ϱg = ∇p 
+        end
+        if laplacian_in_rhs 
+            f =  0 * Δu 
+            g -= - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
+            
+        else
+            f = - μ * Δu  - λ*∇divu + conv  # f = L(u)
+
+        
+    end
+end
+
+
+## Christian's def of f & g 
+   #=
     if EOSType <: IdealGasLaw
         g = c * Symbolics.gradient(log(ϱ), [x, y])
     elseif EOSType <: PowerLaw
@@ -87,15 +131,14 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
     end
 
     ## gravity ϱg = - Δu + ϱ∇log(ϱ)
-    if laplacian_in_rhs # I think that these cases are equivalent, or ?
-        f = - μ * Δu  - λ*∇divu   # Objection: where is the Divergence ? 
+    if laplacian_in_rhs 
+        f = - μ * Δu  - λ*∇divu   
         
     else
         g -= - μ * Δu / ϱ  - λ*∇divu / ϱ
         f = 0 * Δu 
     end
-
-    
+   =#
 
     #Δu = Symbolics.derivative(∇u[1,1], [x]) + Symbolics.derivative(∇u[2,2], [y])
 
@@ -143,7 +186,7 @@ function filename(data)
     gridtype = data["gridtype"]
     laplacian_in_rhs = data["laplacian_in_rhs"]
     # sname
-    sname = savename((@dict μ λ γ c M order nrefs order reconstruct target_residual maxsteps pressure_stab velocitytype densitytype eostype gridtype laplacian_in_rhs))
+    sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab velocitytype densitytype eostype gridtype laplacian_in_rhs))
     sname = "data/projects/compressible_stokes/" * sname
     return sname
 end
@@ -169,12 +212,13 @@ function run_single(data; kwargs...)
     densitytype = data["densitytype"]
     eostype = data["eostype"]
     gridtype = data["gridtype"]
+    pressure_in_f = data["pressure_in_f"]
     laplacian_in_rhs = data["laplacian_in_rhs"]
     data = Dict{String, Any}(data)
     @show data, typeof(data)
 
     ## load data for testcase
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac,nrefs = nrefs)
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac , nrefs = nrefs)
     # added new for the type version
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
     #xgrid = grid(gridtype; nref = nrefs)

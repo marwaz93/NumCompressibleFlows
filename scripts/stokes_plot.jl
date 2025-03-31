@@ -40,7 +40,9 @@ default_args = Dict(
     "densitytype" => ExponentialDensity,
     "eostype" => IdealGasLaw,
     "gridtype" => Mountain2D,
+    "pressure_in_f" => false,
     "laplacian_in_rhs" => true,
+
 )
 
 function load_data(; kwargs...)
@@ -94,13 +96,15 @@ function main(;
     M = 1,
     c = 1,
     μ = 1,
-    λ = 0,
+    λ = -2*μ / 3,
     ufac = 1000,
     τfac = 1,
     order = 1,
     pressure_stab = 0,
-    laplacian_in_rhs = true, 
-    velocitytype = ZeroVelocity,
+    pressure_in_f = false, # default is well-balancedness
+    laplacian_in_rhs = true, # default everything in the force (f or g)
+    conv_parameter = 0,
+    velocitytype = ZeroVelocity, 
     densitytype = ExponentialDensity,
     eostype = IdealGasLaw,
     gridtype = Mountain2D,
@@ -114,13 +118,13 @@ function main(;
 
 ## load data for testcase
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
-ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac)
+ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac, conv_parameter =conv_parameter )
 
 
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
 M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
 M = M_exact
- τ = μ / (c*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+ τ = μ / (c*order^2 * M * sqrt(τfac)*ufac) # time step for pseudo timestepping
  #τ = μ / (4*order^2 * M * sqrt(τfac)) 
 @info "M = $M, τ = $τ"
 sleep(1)
@@ -148,6 +152,10 @@ PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
 assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
+if conv_parameter > 0
+    assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [id(u)], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
+end
+
 assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...)) 
 assign_operator!(PD, HomogeneousBoundaryData(u; regions = 1:4, kwargs...))
 if kernel_rhs! !== nothing
@@ -219,7 +227,7 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 gridplot!(plt[2, 2], xgrid)
 
-Plotter.savefig("Aμ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_fExists?$(laplacian_in_rhs)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype)_gird=$(gridtype).png")
+Plotter.savefig("Test_combinations_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype).png")
 
 
 

@@ -111,7 +111,7 @@ function prepare_data2!(; M = 1, c = 1, μ = 1, ufac = 100, laplacian_in_rhs = t
     ∇u = Symbolics.jacobian(u, [x, y])
     ∇u_reshaped = [∇u[1, 1], ∇u[1, 2], ∇u[2, 1], ∇u[2, 2]]
 
-    ## Laplacian
+    ## Laplacian 
     Δu = [
         (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[1, 2], [y]))[1],
         (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
