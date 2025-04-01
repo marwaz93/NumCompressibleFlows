@@ -1,10 +1,12 @@
 abstract type TestDensity end
 abstract type ExponentialDensity <: TestDensity end
 abstract type LinearDensity <: TestDensity end
+abstract type ExponentialDensityRBR <: TestDensity end
 
 abstract type TestVelocity end
 abstract type ZeroVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
+abstract type RigidBodyRotation <: TestVelocity end
 
 abstract type EOSType end
 abstract type IdealGasLaw <: EOSType end
@@ -13,8 +15,9 @@ abstract type PowerLaw{γ} <: EOSType end
 
 abstract type GridFamily end
 abstract type Mountain2D <: GridFamily end
-abstract type UniformUnitSquare <:GridFamily end # no grid function yet
-abstract type UnstructuredUnitSquare <: GridFamily end
+abstract type UnitSquare <: GridFamily end
+abstract type UniformUnitSquare <: UnitSquare end # no grid function yet
+abstract type UnstructuredUnitSquare <: UnitSquare end
 
 function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
     grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
@@ -45,8 +48,18 @@ end
 
 streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0* ufac *x
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
+streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2) 
+
+inflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
+inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
+inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
+outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
+outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
+outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
+
 
 #density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y^3 / 3 * c) / M 
+density(::Type{<:ExponentialDensityRBR}; c = 1, M = 1, kwargs...) = exp( (x^2+y^2) /  (2*c)) / M 
 density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M  # e^(-y/c_M)/ M  ... Objection: whrere is x^3 ?
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
@@ -65,7 +78,7 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
 
     ## gradient of velocity
     ∇u = Symbolics.jacobian(u, [x, y])
-    ∇u_reshaped = [∇u[1, 1], ∇u[1, 2], ∇u[2, 1], ∇u[2, 2]]
+    ∇u_reshaped = [∇u[1, 1], ∇u[1, 2], ∇u[2, 1], ∇u[2, 2]] # [∇u1,∇u2]
 
     ## Laplacian
     Δu = [
@@ -80,8 +93,8 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
 
     ## for the convection term ϱ(u ⋅∇)u
 
-    conv = conv_parameter * [ u[1] * ∇u[1, 1] + u[2] * ∇u[2, 1],
-     u[1] * ∇u[1, 2] +  u[2] * ∇u[2, 2] ] .* ϱ
+    conv = conv_parameter * [ u[1] * ∇u[1, 1] + u[2] * ∇u[1, 2],
+     u[1] * ∇u[2, 1] +  u[2] * ∇u[2, 2] ] .* ϱ
     @show conv 
 
     # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
@@ -95,7 +108,7 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         end
         if laplacian_in_rhs
             g =  0 * Δu 
-            f -= - μ * Δu   - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
+            f += - μ * Δu   - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
         else
             g = - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u)
         end
@@ -110,7 +123,7 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         end
         if laplacian_in_rhs 
             f =  0 * Δu 
-            g -= - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
+            g += - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
             
         else
             f = - μ * Δu  - λ*∇divu + conv  # f = L(u)

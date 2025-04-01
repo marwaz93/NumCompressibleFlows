@@ -14,16 +14,17 @@ using DrWatson
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexVelocity, ZeroVelocity
-export TestDensity, ExponentialDensity, LinearDensity
+export TestVelocity, P7VortexVelocity, ZeroVelocity, RigidBodyRotation
+export TestDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
 export EOSType, IdealGasLaw, PowerLaw
-export GridFamily, Mountain2D, UnstructuredUnitSquare, UniformUnitSquare
+export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
+export inflow_regions, outflow_regions
 export grid
 export prepare_data, filename, run_single
 
 
 include("kernels.jl")
-export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos!, kernel_convection_linearoperator! # these functions  change the input data
+export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos!, kernel_convection_linearoperator!, kernel_inflow!# these functions  change the input data
 
 
 #include("compressible_stokes.jl")

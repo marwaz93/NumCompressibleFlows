@@ -120,7 +120,6 @@ function main(;
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
 ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac, conv_parameter =conv_parameter )
 
-
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
 M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
 M = M_exact
@@ -147,17 +146,32 @@ elseif order == 2
     
 end
 
+## in/outflow regions
+testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
+rinflow = inflow_regions(velocitytype, gridtype)
+routflow = outflow_regions(velocitytype, gridtype)
+rhom = setdiff(unique!(testgrid[CellRegions]), union(rinflow,routflow))
+
 ## define first sub-problem: Stokes equations to solve for velocity u
 PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
 assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
 if conv_parameter > 0
-    assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [id(u)], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
+    assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [
+        
+    
+    
+    id_u], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
 end
 
-assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...)) 
-assign_operator!(PD, HomogeneousBoundaryData(u; regions = 1:4, kwargs...))
+assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...))
+if length(rhom) > 0 
+    assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
+end
+if length(rinflow) > 0 || length(routflow) > 0
+    assign_operator!(PD, InterpolateBoundaryData(u, u!; regions = union(rinflow,routflow), kwargs...))
+end
 if kernel_rhs! !== nothing
     assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = 3 * order, kwargs...))
 end
@@ -177,6 +191,9 @@ end
 assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...))
 assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...))
 assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
+if length(rinflow) > 0
+    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; quadorder = order + 1, entities = ON_FACES, regions = rinflow, kwargs...))    
+end
 #  [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed   
 
 ## prepare error calculation
@@ -228,6 +245,7 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 gridplot!(plt[2, 2], xgrid)
 
 Plotter.savefig("Test_combinations_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype).png")
+
 
 
 
