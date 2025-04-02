@@ -43,6 +43,17 @@ function kernel_inflow!(u!,ϱ!)
     end
 end
 
+
+## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
+function kernel_outflow!(u!)
+    uval = zeros(Float64, 2)
+    function closure(result, args, qpinfo)
+        u!(uval, qpinfo)
+        flux = dot(uval, qpinfo.normal)
+        result[1] = args[1] * flux
+    end
+end
+
 ## kernel for exact error calculation
 function exact_error!(u!, ∇u!, ϱ!)
     return function closure(result, u, qpinfo)

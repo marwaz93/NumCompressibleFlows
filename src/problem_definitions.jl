@@ -5,6 +5,7 @@ abstract type ExponentialDensityRBR <: TestDensity end
 
 abstract type TestVelocity end
 abstract type ZeroVelocity <: TestVelocity end
+abstract type ConstantVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
 abstract type RigidBodyRotation <: TestVelocity end
 
@@ -37,7 +38,7 @@ function grid(::Type{<:UnstructuredUnitSquare}; nref = 1, kwargs...)
             Triangulate;
             points = [0 0; 1.0 0; 1.0 1.0; 0.0 1.0]',
             bfaces = [1 2; 2 3; 3 4; 4 1]',
-            bfaceregions = ones(Int, 4),
+            bfaceregions = [1,2,3,4],
             regionpoints = [0.5 0.5;]',
             regionnumbers = [1],
             regionvolumes = [4.0^-(nref) / 2]
@@ -47,13 +48,16 @@ end
 
 
 streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0* ufac *x
+streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2) 
 
 inflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
+inflow_regions(::Type{<:ConstantVelocity}, gridtype) = [1,3,4]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
 outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
+outflow_regions(::Type{<:ConstantVelocity}, gridtype) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 
@@ -108,9 +112,9 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
         end
         if laplacian_in_rhs
             g =  0 * Δu 
-            f += - μ * Δu   - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
+            f += - μ * Δu - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
         else
-            g = - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u)
+            g = - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u)
         end
            
     else # Well_balancedness 
