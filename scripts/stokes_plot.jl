@@ -97,17 +97,21 @@ function main(;
     c = 1,
     μ = 1,
     λ = -2*μ / 3,
-    ufac = 1000,
+    ufac = 1,
     τfac = 1,
     order = 1,
     pressure_stab = 0,
-    pressure_in_f = false, # default is well-balancedness
+    pressure_in_f = true, # default is well-balancedness
     laplacian_in_rhs = true, # default everything in the force (f or g)
     conv_parameter = 0,
     velocitytype = ZeroVelocity, 
     densitytype = ExponentialDensity,
     eostype = IdealGasLaw,
     gridtype = Mountain2D,
+    bonus_quadorder = 2,
+    bonus_quadorder_f = bonus_quadorder,
+    bonus_quadorder_g = bonus_quadorder,
+    bonus_quadorder_bnd = bonus_quadorder,
     maxsteps = 5000,
     target_residual = 1.0e-11,
     Plotter = nothing,
@@ -150,18 +154,17 @@ end
 testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
 rinflow = inflow_regions(velocitytype, gridtype)
 routflow = outflow_regions(velocitytype, gridtype)
-rhom = setdiff(unique!(testgrid[CellRegions]), union(rinflow,routflow))
+rhom = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow,routflow))
+@info rinflow, routflow, rhom
+sleep(1)
 
 ## define first sub-problem: Stokes equations to solve for velocity u
 PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
-assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
+assign_operator!(PD, BilinearOperator([div_u]; factor = -λ, store = true, kwargs...)) # Marwa div term 
 if conv_parameter > 0
     assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [
-        
-    
-    
     id_u], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
 end
 
@@ -170,12 +173,12 @@ if length(rhom) > 0
     assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
 end
 if length(rinflow) > 0 || length(routflow) > 0
-    assign_operator!(PD, InterpolateBoundaryData(u, u!; regions = union(rinflow,routflow), kwargs...))
+    assign_operator!(PD, InterpolateBoundaryData(u, u!; bonus_quadorder = bonus_quadorder_bnd, regions = union(rinflow,routflow), kwargs...))
 end
 if kernel_rhs! !== nothing
-    assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = 3 * order, kwargs...))
+    assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = bonus_quadorder_f, kwargs...))
 end
-assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = 3 * order, kwargs...))
+assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder_g, kwargs...))
 
 ## FVM for continuity equation
 @info "timestep = $τ"
@@ -192,13 +195,18 @@ assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), fa
 assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...))
 assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
 if length(rinflow) > 0
-    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; quadorder = order + 1, entities = ON_FACES, regions = rinflow, kwargs...))    
+    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
+end
+if length(routflow) > 0
+    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
+    #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
 end
 #  [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed   
 
 ## prepare error calculation
 EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
 ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+MassIntegrator = ItemIntegrator([id(ϱ)]; resultdim = 1, kwargs...)
 NDofs = zeros(Int, nrefs)
 Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are 
 
@@ -221,6 +229,10 @@ for lvl in 1:nrefs
     SC1 = SolverConfiguration(PD; init = sol, maxiterations = 1, target_residual = target_residual, constant_matrix = true, kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
     sol, nits = iterate_until_stationarity([SC1, SC2]; energy_integrator = EnergyIntegrator, maxsteps = maxsteps, init = sol, kwargs...)
+
+    ## calculate mass
+    Mend = sum(evaluate(MassIntegrator, sol))
+    @info M, Mend
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
