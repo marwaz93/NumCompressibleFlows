@@ -21,18 +21,18 @@ end
 
 
 ## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
-function kernel_upwind!(result, input, u, qpinfo)
+function kernel_upwind!(result, input, u, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
     flux = dot(u, qpinfo.normal) # u * n
     return if flux > 0
-        result[1] = input[1] * flux # rho_left * flux
+        result[1] = input[1] * flux # rho_left * flux 
     else
-        result[1] = input[2] * flux # rho_righ * flux
+        result[1] = input[2] * flux # rho_right * flux
     end
 end
 
 
-## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
-function kernel_inflow!(u!,ϱ!)
+## kernel for inflow boundary
+function kernel_inflow!(u!,ϱ!) # test function is [id(ϱ)] = λ
     uval = zeros(Float64, 2)
     ϱval = zeros(Float64, 1)
     function closure(result, qpinfo)
@@ -44,13 +44,13 @@ function kernel_inflow!(u!,ϱ!)
 end
 
 
-## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
+## kernel for outflow boundary, this function is not clear what it does ?
 function kernel_outflow!(u!)
     uval = zeros(Float64, 2)
-    function closure(result, args, qpinfo)
+    function closure(result, args, qpinfo) # args = [id(ϱ)], [id(ϱ)] ?
         u!(uval, qpinfo)
         flux = dot(uval, qpinfo.normal)
-        result[1] = args[1] * flux
+        result[1] = args[1] * flux 
     end
 end
 

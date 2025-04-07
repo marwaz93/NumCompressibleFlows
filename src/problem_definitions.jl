@@ -1,6 +1,6 @@
 abstract type TestDensity end
-abstract type ExponentialDensity <: TestDensity end
 abstract type LinearDensity <: TestDensity end
+abstract type ExponentialDensity <: TestDensity end
 abstract type ExponentialDensityRBR <: TestDensity end
 
 abstract type TestVelocity end

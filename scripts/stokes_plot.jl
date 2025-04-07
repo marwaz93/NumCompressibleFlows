@@ -141,7 +141,7 @@ p = Unknown("p"; name = "pressure", dim = 1)
 if order == 1
     FETypes = [H1BR{2}, L2P0{1}, L2P0{1}] # H1BR Bernardi-Raugel 2 is the dimension, L2P0 is P0 finite element
     id_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)# if reconstruct is true call apply, if false call id
-     div_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u) # Marwa div term 
+    div_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u) # Marwa div term 
     # RT of lowest order reconstruction 
 elseif order == 2
     FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}] #H1P2B add additional cell bubbles, not Bernardi-Raugel? L2P1 is P1 finite element
@@ -168,6 +168,7 @@ if conv_parameter > 0
     id_u], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
 end
 
+# Start adding hom boundary data 
 assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...))
 if length(rhom) > 0 
     assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
@@ -175,6 +176,7 @@ end
 if length(rinflow) > 0 || length(routflow) > 0
     assign_operator!(PD, InterpolateBoundaryData(u, u!; bonus_quadorder = bonus_quadorder_bnd, regions = union(rinflow,routflow), kwargs...))
 end
+# 
 if kernel_rhs! !== nothing
     assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = bonus_quadorder_f, kwargs...))
 end
@@ -186,14 +188,18 @@ PDT = ProblemDescription("continuity equation")
 assign_unknown!(PDT, ϱ)
 if order > 1
     assign_operator!(PDT, BilinearOperator(kernel_continuity!, [grad(ϱ)], [id(ϱ)], [id(u)]; quadorder = 2 * order, factor = -1, kwargs...))
+    # entities = ON_CELLS since it is the default
 end
 if pressure_stab > 0
     psf = pressure_stab #* xgrid[CellVolumes][1]
     assign_operator!(PDT, BilinearOperator(stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)]; entities = ON_IFACES, factor = psf, kwargs...))
 end
-assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...))
-assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...))
+assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ_h)
+assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...)) # for (1/τ) (ϱ^n,λ_h) on the rhs 
 assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
+# [jump(id(ϱ))] is the test function [λ]
+# [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
+# Start adding inflow 
 if length(rinflow) > 0
     assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
 end
@@ -201,7 +207,7 @@ if length(routflow) > 0
     assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
     #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
 end
-#  [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed   
+   
 
 ## prepare error calculation
 EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
@@ -256,7 +262,7 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 gridplot!(plt[2, 2], xgrid)
 
-Plotter.savefig("Test_combinations_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype).png")
+Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype).png")
 
 
 
