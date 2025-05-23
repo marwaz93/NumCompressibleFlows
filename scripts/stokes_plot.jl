@@ -1,5 +1,6 @@
 using NumCompressibleFlows
 using ExtendableFEM
+using ExtendableFEMBase
 using ExtendableGrids
 using Triangulate
 using SimplexGridFactory
@@ -57,7 +58,7 @@ end
 function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, kwargs...)
 
     data = load_data(; kwargs...)
-    @show data
+    #@show data
     Results = zeros(Float64, length(nrefs), 5)
     NDoFs = zeros(Float64, length(nrefs))
 
@@ -108,7 +109,7 @@ function main(;
     densitytype = ExponentialDensity,
     eostype = IdealGasLaw,
     gridtype = Mountain2D,
-    bonus_quadorder = 2,
+    bonus_quadorder = 4,
     bonus_quadorder_f = bonus_quadorder,
     bonus_quadorder_g = bonus_quadorder,
     bonus_quadorder_bnd = bonus_quadorder,
@@ -124,12 +125,13 @@ function main(;
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
 ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac, conv_parameter =conv_parameter )
 
-xgrid = NumCompressibleFlows.grid(gridtype; nref = 3)
-M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
-M = M_exact
+
+xgrid = NumCompressibleFlows.grid(gridtype; nref = 4)
+M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
+# M = M_exact # We could devide by M_exact directly in calculating τ instead of overwriting 
  τ = μ / (c*order^2 * M * sqrt(τfac)*ufac) # time step for pseudo timestepping
  #τ = μ / (4*order^2 * M * sqrt(τfac)) 
-@info "M = $M, τ = $τ"
+@info "M = $M, M_exact = $M_exact τ = $τ"
 sleep(1)
 
 ## define unknowns
@@ -162,10 +164,10 @@ sleep(1)
 PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
-assign_operator!(PD, BilinearOperator([div_u]; factor = -λ, store = true, kwargs...)) # Marwa div term 
+assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
 if conv_parameter > 0
     assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [
-    id_u], [id(u),grad(u),id(ϱ)]; factor = -1, kwargs...))
+    id_u], [id(u),grad(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
 end
 
 # Start adding hom boundary data 
@@ -194,18 +196,18 @@ if pressure_stab > 0
     psf = pressure_stab #* xgrid[CellVolumes][1]
     assign_operator!(PDT, BilinearOperator(stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)]; entities = ON_IFACES, factor = psf, kwargs...))
 end
-assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ_h)
-assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...)) # for (1/τ) (ϱ^n,λ_h) on the rhs 
-assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
-# [jump(id(ϱ))] is the test function [λ]
-# [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
+assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ)
+assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...)) # for (1/τ) (ϱ^n,λ) on the rhs 
+assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
+# [jump(id(ϱ))]is test function lambda [λ] , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
 # Start adding inflow 
 if length(rinflow) > 0
     assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
 end
 if length(routflow) > 0
-    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
+    #assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
     #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
+    assign_operator!(PDT, BilinearOperatorDG(kernel_outflow!(u!), [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
 end
    
 
@@ -226,11 +228,36 @@ for lvl in 1:nrefs
     sol = FEVector(FES; tags = [u, ϱ, p]) # create solution vector and tag blocks with the unknowns (u,ρ,p) that has the same order as FETypes
 
     ## initial guess
-    fill!(sol[ϱ], M) # fill block corresbonding to unknown ρ with initial value M, in Algorithm it is M/|Ω|?? We could write it as M/|Ω| and delete area from down there
+    fill!(sol[ϱ], M) # fill block corresponding to unknown ρ with initial value M, in Algorithm it is M/|Ω|?? We could write it as M/|Ω| and delete area from down there
     interpolate!(sol[u], u!)
     interpolate!(sol[ϱ], ϱ!)
+
+
+#=     D = FEMatrix(FES, FES)
+    assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(2))], 
+    [this(id(2)), other(id(2))], [id(1)]; quadorder = order+1, entities = 
+    ON_IFACES), sol)
+    ϱ_dofs = FES[1].ndofs+1:FES[1].ndofs+FES[2].ndofs
+    @show Matrix{Float64}(submatrix(D.entries, ϱ_dofs, ϱ_dofs))
+    sleep(1) =#
+
+     D = FEMatrix(FES, FES)
+      assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(2))], 
+     [this(id(2)), other(id(2))], [id(1)]; factor = τ, quadorder = order+1, entities = 
+     ON_IFACES), sol) 
+     assemble!(D, BilinearOperatorDG([id(2)]))
+     ϱ_dofs = FES[1].ndofs+1:FES[1].ndofs+FES[2].ndofs
+     D = submatrix(D.entries, ϱ_dofs, ϱ_dofs)
+     one_vector = ones(Float64, length(ϱ_dofs))
+     rowsums = ones(Float64, length(ϱ_dofs))
+     colsums = ones(Float64, length(ϱ_dofs))
+     mul!(rowsums, D, one_vector)
+     mul!(colsums, D', one_vector)
+     @show rowsums, colsums
+    sleep(1)
     NDofs[lvl] = length(sol.entries)
 
+    M_start = sum(evaluate(MassIntegrator, sol))
     ## solve the two problems iteratively [1] >> [2] >> [1] >> [2] ...
     SC1 = SolverConfiguration(PD; init = sol, maxiterations = 1, target_residual = target_residual, constant_matrix = true, kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
@@ -238,7 +265,7 @@ for lvl in 1:nrefs
 
     ## calculate mass
     Mend = sum(evaluate(MassIntegrator, sol))
-    @info M, Mend
+     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M-Mend)"
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
@@ -262,8 +289,8 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 gridplot!(plt[2, 2], xgrid)
 
-Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)_eos=$(eostype).png")
-
+#Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_M=$(M)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)22_eos=$(eostype).png")
+Plotter.savefig("Galway_DG_$(velocitytype)_$(densitytype)_$(eostype)_$(μ)_$(c)_Pinf_$(pressure_in_f).png")
 
 
 
