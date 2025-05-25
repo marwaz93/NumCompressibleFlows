@@ -17,6 +17,8 @@ include("problem_definitions.jl")
 export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, RigidBodyRotation
 export TestDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
 export EOSType, IdealGasLaw, PowerLaw
+export ConvectionType, NoConvection, StandardConvection, OseenConvection
+export CoriolisType, NoCoriolis, BetaPlaneApproximation
 export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
 export inflow_regions, outflow_regions
 export grid
@@ -24,7 +26,18 @@ export prepare_data, filename, run_single
 
 
 include("kernels.jl")
-export stab_kernel!, kernel_continuity!, kernel_upwind!, exact_error!, standard_gravity!, energy_kernel!, eos!, kernel_convection_linearoperator!, kernel_inflow!, kernel_outflow! # these functions  change the input data
+export stab_kernel!
+export kernel_continuity!
+export kernel_upwind!
+export exact_error!
+export standard_gravity!
+export energy_kernel!
+export eos!
+export kernel_standardconvection_linearoperator!
+export kernel_oseenconvection!
+export kernel_coriolis_linearoperator!
+export kernel_inflow!
+export kernel_outflow!
 
 
 #include("compressible_stokes.jl")

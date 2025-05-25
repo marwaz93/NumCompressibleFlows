@@ -13,12 +13,21 @@ abstract type EOSType end
 abstract type IdealGasLaw <: EOSType end
 abstract type PowerLaw{γ} <: EOSType end
 
-
 abstract type GridFamily end
 abstract type Mountain2D <: GridFamily end
 abstract type UnitSquare <: GridFamily end
 abstract type UniformUnitSquare <: UnitSquare end # no grid function yet
 abstract type UnstructuredUnitSquare <: UnitSquare end
+
+abstract type ConvectionType end
+abstract type NoConvection <: ConvectionType end
+abstract type StandardConvection <: ConvectionType end
+abstract type OseenConvection <: ConvectionType end
+abstract type RotationForm <: ConvectionType end
+
+abstract type CoriolisType end
+abstract type NoCoriolis <: CoriolisType end
+abstract type BetaPlaneApproximation{β0} <: CoriolisType where {β0} end
 
 function grid(::Type{<:Mountain2D}; nref = 1, kwargs...)
     grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
@@ -51,7 +60,7 @@ function grid(::Type{<:UniformUnitSquare}; nref = 1, kwargs...)
     return grid_builder(nref)
 end
 
-streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0* ufac *x
+streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0*x
 streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2)
@@ -69,13 +78,30 @@ outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 
 
-density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = M *  exp(- y^3 / 3 * c) 
+angular_velocity(::Type{<:NoCoriolis}; kwargs...) = 0*x
+angular_velocity(::Type{<:BetaPlaneApproximation{β0}}; kwargs...) where {β0} = β0*y
+angular_velocity(::Type{<:BetaPlaneApproximation{β0}}, qpinfo) where {β0} = β0*qpinfo.x[2]
+
+density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = M *  exp(- y^3 / (3 * c)) 
 #density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M  # e^(-y/c_M)/ M  ... Objection: whrere is x^3 ?
 density(::Type{<:ExponentialDensityRBR}; c = 1, M = 1, kwargs...) =  M * exp( (x^2+y^2) /  (2*c)) 
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 
 
-function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSType::Type{<:EOSType}; M = 1, c = 1, μ = 1, ufac = 1, laplacian_in_rhs = true, pressure_in_f = false , λ = -2*μ / 3,conv_parameter = 0, kwargs...)
+function prepare_data(
+    TVT::Type{<:TestVelocity},
+    TDT::Type{<:TestDensity},
+    EOSType::Type{<:EOSType};
+    M = 1,
+    c = 1,
+    μ = 1,
+    ufac = 1,
+    laplacian_in_rhs = true,
+    pressure_in_f = false,
+    λ = -2*μ / 3,
+    convectiontype = NoConvection,
+    coriolistype = NoCoriolis,
+    kwargs...)
 
     ## get stream function and density for test types
     ξ = streamfunction(TVT;ufac = ufac, kwargs...)
@@ -108,10 +134,18 @@ function prepare_data(TVT::Type{<:TestVelocity}, TDT::Type{<:TestDensity}, EOSTy
     ]
 
     ## for the convection term ϱ(u ⋅∇)u
-
-    conv = conv_parameter * [ u[1] * ∇u[1, 1] + u[2] * ∇u[1, 2],
-     u[1] * ∇u[2, 1] +  u[2] * ∇u[2, 2] ] .* ϱ
+    if convectiontype !== NoConvection
+        conv = [ u[1] * ∇u[1, 1] + u[2] * ∇u[1, 2],
+                 u[1] * ∇u[2, 1] +  u[2] * ∇u[2, 2] ] .* ϱ
+    else
+        conv = [0*x, 0*x]
+    end
     @show conv 
+
+    if coriolistype !== NoCoriolis
+        ω = angular_velocity(coriolistype; kwargs...)
+        conv += 2*ϱ*ω*[u[1], - u[2]]
+    end
     
 
     # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
