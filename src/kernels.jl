@@ -9,7 +9,7 @@ function kernel_continuity!(result, ϱ, u, qpinfo)
     return result[2] = ϱ[1] * u[2]
 end
 
-## kernel for ((ϱu ⋅ ∇)u, ∇v) ON_CELLS in continuity equation
+## kernel for ((ϱu ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
 function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     u = view(args,1:2)
     ∇u = view(args, 3:6)
@@ -19,7 +19,18 @@ function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
-## kernel for (2ϱω×u, v) ON_CELLS in continuity equation
+## kernel for (ϱ rotu × u, v) - 1/2 (ϱu⋅u,div(v)) ON_CELLS in momentum balance
+function kernel_rotationform_linearoperator!(result, args, qpinfo)
+    u = view(args,1:2)
+    curlu = view(args, 3)
+    ϱ = view(args, 4)
+    result[1] = -ϱ[1] * curlu[1] * u[2]
+    result[2] = ϱ[1] * curlu[1] * u[1]
+    result[3] = -ϱ[1] * dot(u,u)*0.5
+    return nothing
+end
+
+## kernel for (2ϱω×u, v) ON_CELLS in momentum balance
 function kernel_coriolis_linearoperator!(coriolistype)
     function closure(result, args, qpinfo)
         ω = angular_velocity(coriolistype, qpinfo)
@@ -31,7 +42,7 @@ function kernel_coriolis_linearoperator!(coriolistype)
     end
 end
 
-## kernel for ((ϱβ ⋅ ∇)u, ∇v) ON_CELLS in continuity equation
+## kernel for ((ϱβ ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
 function kernel_oseenconvection_linearoperator!(β!)
     βval = zeros(Float64, 2)
     function closure(result, args, qpinfo)
@@ -45,7 +56,7 @@ function kernel_oseenconvection_linearoperator!(β!)
 end
 
 
-## kernel for ((β ⋅ ∇)u, ∇v) ON_CELLS in continuity equation
+## kernel for ((β ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
 function kernel_oseenconvection!(β!, ϱ!)
     βval = zeros(Float64, 2)
     ϱval = zeros(Float64, 1)

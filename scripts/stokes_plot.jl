@@ -177,6 +177,9 @@ if convectiontype == StandardConvection
 elseif convectiontype == OseenConvection
     assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [
     id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
+elseif convectiontype == RotationForm
+    assign_operator!(PD, LinearOperator(kernel_rotationform_linearoperator!, [
+    id_u, div_u], [id_u,curl2(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
 elseif convectiontype == NoConvection
 else
     @error "discretization of convectiontype=$convectiontype not defined"
