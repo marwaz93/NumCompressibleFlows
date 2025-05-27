@@ -39,11 +39,12 @@ default_args = Dict(
     # data of the problem
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
+    "convectiontype" => NoConvection,
+    "coriolistype" => NoCoriolis,
     "eostype" => IdealGasLaw,
     "gridtype" => Mountain2D,
     "pressure_in_f" => false,
     "laplacian_in_rhs" => true,
-
 )
 
 function load_data(; kwargs...)
@@ -104,9 +105,10 @@ function main(;
     pressure_stab = 0,
     pressure_in_f = true, # default is well-balancedness
     laplacian_in_rhs = true, # default everything in the force (f or g)
-    conv_parameter = 0,
     velocitytype = ZeroVelocity, 
     densitytype = ExponentialDensity,
+    convectiontype = NoConvection,
+    coriolistype = NoCoriolis,
     eostype = IdealGasLaw,
     gridtype = Mountain2D,
     bonus_quadorder = 4,
@@ -123,7 +125,7 @@ function main(;
 
 ## load data for testcase
 #grid_builder, kernel_gravity!, kernel_rhs!, u!, ∇u!, ϱ!, τfac = load_testcase_data(testcase; laplacian_in_rhs = laplacian_in_rhs,Akbas_example=Akbas_example, M = M, c = c, μ = μ,γ=γ, ufac = ufac)
-ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac, conv_parameter =conv_parameter )
+ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs, pressure_in_f, M, c, μ, λ,γ, ufac, convectiontype, coriolistype )
 
 
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 4)
@@ -165,9 +167,22 @@ PD = ProblemDescription("Stokes problem")
 assign_unknown!(PD, u)
 assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
 assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
-if conv_parameter > 0
-    assign_operator!(PD, LinearOperator(kernel_convection_linearoperator!, [
-    id_u], [id(u),grad(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+if coriolistype !== NoCoriolis
+    assign_operator!(PD, LinearOperator(kernel_coriolis_linearoperator!(coriolistype), [
+    id_u], [id_u,id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+end
+if convectiontype == StandardConvection
+    assign_operator!(PD, LinearOperator(kernel_standardconvection_linearoperator!, [
+    id_u], [id_u,grad(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+elseif convectiontype == OseenConvection
+    assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [
+    id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
+elseif convectiontype == RotationForm
+    assign_operator!(PD, LinearOperator(kernel_rotationform_linearoperator!, [
+    id_u, div_u], [id_u,curl2(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+elseif convectiontype == NoConvection
+else
+    @error "discretization of convectiontype=$convectiontype not defined"
 end
 
 # Start adding hom boundary data 

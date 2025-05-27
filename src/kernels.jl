@@ -9,8 +9,8 @@ function kernel_continuity!(result, ϱ, u, qpinfo)
     return result[2] = ϱ[1] * u[2]
 end
 
-## kernel for (uϱ, ∇λ) ON_CELLS in continuity equation
-function kernel_convection_linearoperator!(result, args, qpinfo)
+## kernel for ((ϱu ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
+function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     u = view(args,1:2)
     ∇u = view(args, 3:6)
     ϱ = view(args, 7)
@@ -19,6 +19,56 @@ function kernel_convection_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+## kernel for (ϱ rotu × u, v) - 1/2 (ϱu⋅u,div(v)) ON_CELLS in momentum balance
+function kernel_rotationform_linearoperator!(result, args, qpinfo)
+    u = view(args,1:2)
+    curlu = view(args, 3)
+    ϱ = view(args, 4)
+    result[1] = -ϱ[1] * curlu[1] * u[2]
+    result[2] = ϱ[1] * curlu[1] * u[1]
+    result[3] = -ϱ[1] * dot(u,u)*0.5
+    return nothing
+end
+
+## kernel for (2ϱω×u, v) ON_CELLS in momentum balance
+function kernel_coriolis_linearoperator!(coriolistype)
+    function closure(result, args, qpinfo)
+        ω = angular_velocity(coriolistype, qpinfo)
+        u = view(args, 1:2)
+        ϱ = view(args, 3)
+        result[1] = ϱ[1] * 2 * ω * u[1]
+        result[2] = - ϱ[1] * 2 * ω * u[2]
+        return nothing
+    end
+end
+
+## kernel for ((ϱβ ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
+function kernel_oseenconvection_linearoperator!(β!)
+    βval = zeros(Float64, 2)
+    function closure(result, args, qpinfo)
+        β!(βval, qpinfo)
+        ∇u = view(args, 1:4)
+        ϱ = view(args, 5)
+        result[1] = ϱ[1] * dot(βval, view(∇u,1:2))
+        result[2] = ϱ[1] * dot(βval, view(∇u,3:4))
+        return nothing
+    end
+end
+
+
+## kernel for ((β ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
+function kernel_oseenconvection!(β!, ϱ!)
+    βval = zeros(Float64, 2)
+    ϱval = zeros(Float64, 1)
+    function closure(result, args, qpinfo)
+        β!(βval, qpinfo)
+        ϱ!(ϱval, qpinfo)
+        ∇u = view(args, 1:4)
+        result[1] = ϱval[1] * dot(βval, view(∇u,1:2))
+        result[2] = ϱval[1] * dot(βval, view(∇u,3:4))
+        return nothing
+    end
+end
 
 ## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
 function kernel_upwind!(result, input, u, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
