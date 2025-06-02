@@ -93,6 +93,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     ## save
     Plotter.savefig("Aconvegence_history.png")
 end
+
 function main(;
     nrefs = 4,
     M = 1,
@@ -100,7 +101,7 @@ function main(;
     μ = 1,
     λ = -2*μ / 3,
     ufac = 1,
-    τfac = 1,
+    τfac = 4,
     order = 1,
     pressure_stab = 0,
     pressure_in_f = true, # default is well-balancedness
@@ -131,7 +132,7 @@ function main(;
 xgrid = NumCompressibleFlows.grid(gridtype; nref = 4)
 M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
 # M = M_exact # We could devide by M_exact directly in calculating τ instead of overwriting 
- τ = μ / (c*order^2 * M * sqrt(τfac)*ufac) # time step for pseudo timestepping
+ τ = μ / (c*order^2 * M * τfac *ufac) # time step for pseudo timestepping
  #τ = μ / (4*order^2 * M * sqrt(τfac)) 
 @info "M = $M, M_exact = $M_exact τ = $τ"
 sleep(1)
@@ -211,9 +212,9 @@ if pressure_stab > 0
     psf = pressure_stab #* xgrid[CellVolumes][1]
     assign_operator!(PDT, BilinearOperator(stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)]; entities = ON_IFACES, factor = psf, kwargs...))
 end
-assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ)
-assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...)) # for (1/τ) (ϱ^n,λ) on the rhs 
-assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
+assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ)
+assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1, kwargs...)) # for (1/τ) (ϱ^n,λ) on the rhs 
+# assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
 # [jump(id(ϱ))]is test function lambda [λ] , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
 # Start adding inflow 
 if length(rinflow) > 0
@@ -224,6 +225,29 @@ if length(routflow) > 0
     #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
     assign_operator!(PDT, BilinearOperatorDG(kernel_outflow!(u!), [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
 end
+
+## upwind operator with variable time step
+D = nothing
+one_vector = nothing
+rowsums = nothing
+sol = nothing
+     
+function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
+    fill!(D.entries.cscmatrix.nzval, 0)
+    assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))], 
+     [this(id(1)), other(id(1))], [id(1)]; factor = 1, quadorder = order+1, entities = 
+     ON_IFACES), sol)
+
+    ## check if matrix is diagonally dominant
+    mul!(rowsums, D.entries, one_vector)
+
+    ## if not, use the smaller τ
+    tau = min(extrema(abs.(xgrid[CellVolumes]./rowsums))[1]/2, τ)
+    print(" (τ = $tau) ")
+    add!(A, D.entries; factor = tau)
+end
+assign_operator!(PDT, CallbackOperator(callback!, [u]; linearized_dependencies = [ϱ,ϱ], modifies_rhs = false, kwargs..., name = "upwind matrix D scaled by tau"))
+
    
 
 ## prepare error calculation
@@ -241,11 +265,18 @@ for lvl in 1:nrefs
     @show xgrid
     FES = [FESpace{FETypes[j]}(xgrid) for j in 1:3] # 3 because we have dim(FETypes)=3
     sol = FEVector(FES; tags = [u, ϱ, p]) # create solution vector and tag blocks with the unknowns (u,ρ,p) that has the same order as FETypes
+    NDofs[lvl] = length(sol.entries)
 
     ## initial guess
     fill!(sol[ϱ], M) # fill block corresponding to unknown ρ with initial value M, in Algorithm it is M/|Ω|?? We could write it as M/|Ω| and delete area from down there
     interpolate!(sol[u], u!)
     interpolate!(sol[ϱ], ϱ!)
+
+    ## update helper structures for upwind kernel
+
+    D = FEMatrix(FES[2], FES[2])
+    one_vector = ones(Float64, size(D.entries,1))
+    rowsums = zeros(Float64, size(D.entries,1))
 
 
 #=     D = FEMatrix(FES, FES)
@@ -255,22 +286,6 @@ for lvl in 1:nrefs
     ϱ_dofs = FES[1].ndofs+1:FES[1].ndofs+FES[2].ndofs
     @show Matrix{Float64}(submatrix(D.entries, ϱ_dofs, ϱ_dofs))
     sleep(1) =#
-
-     D = FEMatrix(FES, FES)
-      assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(2))], 
-     [this(id(2)), other(id(2))], [id(1)]; factor = τ, quadorder = order+1, entities = 
-     ON_IFACES), sol) 
-     assemble!(D, BilinearOperatorDG([id(2)]))
-     ϱ_dofs = FES[1].ndofs+1:FES[1].ndofs+FES[2].ndofs
-     D = submatrix(D.entries, ϱ_dofs, ϱ_dofs)
-     one_vector = ones(Float64, length(ϱ_dofs))
-     rowsums = ones(Float64, length(ϱ_dofs))
-     colsums = ones(Float64, length(ϱ_dofs))
-     mul!(rowsums, D, one_vector)
-     mul!(colsums, D', one_vector)
-     @show rowsums, colsums
-    sleep(1)
-    NDofs[lvl] = length(sol.entries)
 
     M_start = sum(evaluate(MassIntegrator, sol))
     ## solve the two problems iteratively [1] >> [2] >> [1] >> [2] ...
