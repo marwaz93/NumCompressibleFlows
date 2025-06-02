@@ -144,7 +144,7 @@ function prepare_data(
 
     if coriolistype !== NoCoriolis
         ω = angular_velocity(coriolistype; kwargs...)
-        conv += 2*ϱ*ω*[u[1], - u[2]]
+        conv += 2*ϱ*ω*[-u[2],  u[1]] # Marwa 30 May: conv += 2*ϱ*ω*[u[2], - u[1]] ? 
     end
     
 

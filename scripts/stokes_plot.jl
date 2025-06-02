@@ -320,9 +320,7 @@ plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [orde
 gridplot!(plt[2, 2], xgrid)
 
 #Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_M=$(M)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)22_eos=$(eostype).png")
-Plotter.savefig("Galway_DG_$(velocitytype)_$(densitytype)_$(eostype)_$(μ)_$(c)_Pinf_$(pressure_in_f).png")
-
-
+Plotter.savefig("Coriolis_$(velocitytype)_$(densitytype)_$(eostype)_$(μ)_$(c)_Pinf_$(pressure_in_f).png")
 
 return Results, plt
 end

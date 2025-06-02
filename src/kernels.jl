@@ -36,8 +36,8 @@ function kernel_coriolis_linearoperator!(coriolistype)
         ω = angular_velocity(coriolistype, qpinfo)
         u = view(args, 1:2)
         ϱ = view(args, 3)
-        result[1] = ϱ[1] * 2 * ω * u[1]
-        result[2] = - ϱ[1] * 2 * ω * u[2]
+        result[1] = -ϱ[1] * 2 * ω * u[2]
+        result[2] =  ϱ[1] * 2 * ω * u[1]
         return nothing
     end
 end

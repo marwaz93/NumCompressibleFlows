@@ -18,6 +18,7 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 SimplexGridFactory = "57bfcd06-606e-45d6-baf4-4ba06da0efd5"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Triangulate = "f7e6ffb2-c36d-4f8f-a77e-16e897189344"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [compat]
 ColorTypes = "0.12.0"
@@ -34,3 +35,4 @@ Plots = "1.40.9"
 SimplexGridFactory = "2.4.0"
 Symbolics = "5.36.0"
 Triangulate = "2.4.0"
+Unitful = "1.22.1"
