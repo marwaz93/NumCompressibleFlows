@@ -217,23 +217,17 @@ assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order 
 # assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
 # [jump(id(ϱ))]is test function lambda [λ] , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
 # Start adding inflow 
-if length(rinflow) > 0
-    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
-end
-if length(routflow) > 0
-    #assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
-    #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
-    assign_operator!(PDT, BilinearOperatorDG(kernel_outflow!(u!), [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
-end
 
 ## upwind operator with variable time step
 D = nothing
+brho = nothing
 one_vector = nothing
 rowsums = nothing
 sol = nothing
      
 function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
     fill!(D.entries.cscmatrix.nzval, 0)
+    fill!(brho.entries, 0)
     assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))], 
      [this(id(1)), other(id(1))], [id(1)]; factor = 1, quadorder = order+1, entities = 
      ON_IFACES), sol)
@@ -244,7 +238,17 @@ function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time
     ## if not, use the smaller τ
     tau = min(extrema(abs.(xgrid[CellVolumes]./rowsums))[1]/2, τ)
     print(" (τ = $tau) ")
+
+    if length(rinflow) > 0
+        assemble!(brho, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(1)]; factor = -1 , bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
+    end
+    if length(routflow) > 0
+        assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
+    end
+
     add!(A, D.entries; factor = tau)
+    b .+= tau * brho.entries
+
 end
 assign_operator!(PDT, CallbackOperator(callback!, [u]; linearized_dependencies = [ϱ,ϱ], modifies_rhs = false, kwargs..., name = "upwind matrix D scaled by tau"))
 
@@ -275,6 +279,7 @@ for lvl in 1:nrefs
     ## update helper structures for upwind kernel
 
     D = FEMatrix(FES[2], FES[2])
+    brho = FEVector(FES[2])
     one_vector = ones(Float64, size(D.entries,1))
     rowsums = zeros(Float64, size(D.entries,1))
 
@@ -295,7 +300,7 @@ for lvl in 1:nrefs
 
     ## calculate mass
     Mend = sum(evaluate(MassIntegrator, sol))
-     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M-Mend)"
+     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
