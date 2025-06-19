@@ -19,6 +19,18 @@ function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+function multiply_h_linear!(power)
+    function closure(result, qpinfo)
+        result .*= qpinfo.volume^power
+    end
+end
+
+function multiply_h_bilinear!(power)
+    function closure(result, input, qpinfo)
+        result .= input * qpinfo.volume^power
+    end
+end
+
 ## kernel for (ϱ rotu × u, v) - 1/2 (ϱu⋅u,div(v)) ON_CELLS in momentum balance
 function kernel_rotationform_linearoperator!(result, args, qpinfo)
     u = view(args,1:2)

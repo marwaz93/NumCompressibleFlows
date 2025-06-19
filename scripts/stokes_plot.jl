@@ -118,6 +118,8 @@ function main(;
     bonus_quadorder_bnd = bonus_quadorder,
     maxsteps = 5000,
     target_residual = 1.0e-11,
+    stab1 = (1-0.1,μ/c^2),
+    stab2 = (1.5,μ/c^2),
     Plotter = nothing,
     reconstruct = true,
     γ=1,
@@ -217,23 +219,19 @@ assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order 
 # assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
 # [jump(id(ϱ))]is test function lambda [λ] , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
 # Start adding inflow 
-if length(rinflow) > 0
-    assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
-end
-if length(routflow) > 0
-    #assign_operator!(PDT, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
-    #assign_operator!(PDT, LinearOperatorDG(kernel_outflow!(u!), [id(ϱ)], [id(ϱ)]; factor = -1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...))    
-    assign_operator!(PDT, BilinearOperatorDG(kernel_outflow!(u!), [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
-end
 
 ## upwind operator with variable time step
 D = nothing
+brho = nothing
 one_vector = nothing
 rowsums = nothing
 sol = nothing
+
+rho_mean = M_exact/sum(xgrid[CellVolumes])
      
 function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
     fill!(D.entries.cscmatrix.nzval, 0)
+    fill!(brho.entries, 0)
     assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))], 
      [this(id(1)), other(id(1))], [id(1)]; factor = 1, quadorder = order+1, entities = 
      ON_IFACES), sol)
@@ -244,11 +242,27 @@ function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time
     ## if not, use the smaller τ
     tau = min(extrema(abs.(xgrid[CellVolumes]./rowsums))[1]/2, τ)
     print(" (τ = $tau) ")
+
+    if length(rinflow) > 0
+        assemble!(brho, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(1)]; factor = -1 , bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
+    end
+    if length(routflow) > 0
+        assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
+    end
+
+    if stab1[2] > 0
+        assemble!(D, BilinearOperatorDG(multiply_h_bilinear!(stab1[1]),[jump(id(1))]; factor = stab1[2], entities = ON_IFACES, kwargs...)) 
+    end
+    if stab2[2] > 0
+        hmean = sum(xgrid[FaceVolumes])/length(xgrid[FaceVolumes])
+        assemble!(D, BilinearOperator([id(1)]; factor = hmean^stab2[1]*stab2[2], kwargs...)) 
+        assemble!(brho, LinearOperator([id(1)]; factor = hmean^stab2[1]*rho_mean*stab2[2], kwargs...)) 
+    end
+    
     add!(A, D.entries; factor = tau)
+    b .+= tau * brho.entries
 end
 assign_operator!(PDT, CallbackOperator(callback!, [u]; linearized_dependencies = [ϱ,ϱ], modifies_rhs = false, kwargs..., name = "upwind matrix D scaled by tau"))
-
-   
 
 ## prepare error calculation
 EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
@@ -275,17 +289,9 @@ for lvl in 1:nrefs
     ## update helper structures for upwind kernel
 
     D = FEMatrix(FES[2], FES[2])
+    brho = FEVector(FES[2])
     one_vector = ones(Float64, size(D.entries,1))
     rowsums = zeros(Float64, size(D.entries,1))
-
-
-#=     D = FEMatrix(FES, FES)
-    assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(2))], 
-    [this(id(2)), other(id(2))], [id(1)]; quadorder = order+1, entities = 
-    ON_IFACES), sol)
-    ϱ_dofs = FES[1].ndofs+1:FES[1].ndofs+FES[2].ndofs
-    @show Matrix{Float64}(submatrix(D.entries, ϱ_dofs, ϱ_dofs))
-    sleep(1) =#
 
     M_start = sum(evaluate(MassIntegrator, sol))
     ## solve the two problems iteratively [1] >> [2] >> [1] >> [2] ...
@@ -295,7 +301,7 @@ for lvl in 1:nrefs
 
     ## calculate mass
     Mend = sum(evaluate(MassIntegrator, sol))
-     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M-Mend)"
+     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
