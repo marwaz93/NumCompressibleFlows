@@ -39,6 +39,7 @@ export kernel_oseenconvection!
 export kernel_coriolis_linearoperator!
 export kernel_inflow!
 export kernel_outflow!
+export multiply_h_bilinear!, multiply_h_linear!
 
 
 #include("compressible_stokes.jl")
