@@ -118,8 +118,8 @@ function main(;
     bonus_quadorder_bnd = bonus_quadorder,
     maxsteps = 5000,
     target_residual = 1.0e-11,
-    stab1 = (1-0.1,μ/c^2),
-    stab2 = (1.5,μ/c^2),
+    stab1 = (1-0.1,μ/c),
+    stab2 = (1.5,μ/c),
     Plotter = nothing,
     reconstruct = true,
     γ=1,
@@ -315,18 +315,33 @@ for lvl in 1:nrefs
     print_convergencehistory(NDofs[1:lvl], Results[1:lvl, :]; X_to_h = X -> X .^ (-1 / 2), ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"], xlabel = "ndof")
 end
 
-
-## plot
-plt = GridVisualizer(; Plotter = Plotter, layout = (2, 2), clear = true, size = (1000, 1000))
-scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
-vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
-scalarplot!(plt[2, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
-plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
+  ## plot
+#plt = GridVisualizer(; Plotter = Plotter, layout = (2, 2), clear = true, size = (1000, 1000))
+#scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
+#vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
+#scalarplot!(plt[2, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
+#plot_convergencehistory!(plt[1, 2], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
 #plot_convergencehistory!(plt[1, 1], NDofs, Results[:, 1:4]; add_h_powers = [order, order + 1], X_to_h = X -> 0.2 * X .^ (-1 / 2), legend = :best, ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"])
-gridplot!(plt[2, 2], xgrid)
+#gridplot!(plt[2, 2], xgrid)
+
+  ## plot convegence_history
+    #Plotter.rc("font", size=20)
+    yticks = [1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
+    xticks = [1e1,1e2,1e3,1e4,1e5]
+    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    Plotter.plot!(NDofs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
+    Plotter.plot!(NDofs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
+    Plotter.plot!(NDofs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
+    Plotter.plot!(NDofs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
+    Plotter.plot!(NDofs, 200*NDofs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
+    Plotter.plot!(NDofs, 200*NDofs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+   
+   Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "ndofs",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    ## save
 
 #Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_M=$(M)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)22_eos=$(eostype).png")
-Plotter.savefig("Coriolis_$(velocitytype)_$(densitytype)_$(eostype)_$(μ)_$(c)_Pinf_$(pressure_in_f).png")
+#Plotter.savefig("DensityStab_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
+Plotter.savefig("Aconvegence_history_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_λ$(λ).png")
 
 return Results, plt
 end
