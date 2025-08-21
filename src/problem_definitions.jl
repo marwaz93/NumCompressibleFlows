@@ -1,3 +1,13 @@
+using NumCompressibleFlows
+using ExtendableFEM
+using ExtendableFEMBase
+using ExtendableGrids
+using Triangulate
+using SimplexGridFactory
+using GridVisualize
+using Symbolics
+using LinearAlgebra
+
 abstract type TestDensity end
 abstract type LinearDensity <: TestDensity end
 abstract type ExponentialDensity <: TestDensity end
@@ -243,14 +253,20 @@ function filename(data)
     target_residual = data["target_residual"]
     maxsteps = data["maxsteps"]
     pressure_stab = data["pressure_stab"]
+    bonus_quadorder = data["bonus_quadorder"]
     # data of the problem
     velocitytype = data["velocitytype"]
     densitytype = data["densitytype"]
     eostype = data["eostype"]
     gridtype = data["gridtype"]
+    convectiontype = data["convectiontype"]
+    coriolistype = data["coriolistype"]
     laplacian_in_rhs = data["laplacian_in_rhs"]
+    stab1 = data["stab1"]
+    stab2 = data["stab2"]
+    
     # sname
-    sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab velocitytype densitytype eostype gridtype laplacian_in_rhs))
+    sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
     sname = "data/projects/compressible_stokes/" * sname
     return sname
 end
@@ -271,6 +287,7 @@ function run_single(data; kwargs...)
     target_residual = data["target_residual"]
     maxsteps = data["maxsteps"]
     pressure_stab = data["pressure_stab"]
+    bonus_quadorder = data["bonus_quadorder"]
     # data of the problem
     velocitytype = data["velocitytype"]
     densitytype = data["densitytype"]
@@ -278,6 +295,10 @@ function run_single(data; kwargs...)
     gridtype = data["gridtype"]
     pressure_in_f = data["pressure_in_f"]
     laplacian_in_rhs = data["laplacian_in_rhs"]
+    convectiontype = data["convectiontype"]
+    coriolistype = data["coriolistype"]
+    stab1 = data["stab1"]
+    stab2 = data["stab2"]
     data = Dict{String, Any}(data)
     @show data, typeof(data)
 
@@ -286,59 +307,154 @@ function run_single(data; kwargs...)
     # added new for the type version
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
     #xgrid = grid(gridtype; nref = nrefs)
-    M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 20) 
-    M = M_exact
-    τ = μ / (c*order^2 * M * sqrt(τfac)) # time step for pseudo timestepping
+
+    # From here :D 
+
+
+    M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
+    # M = M_exact # We could devide by M_exact directly in calculating τ instead of overwriting 
+    τ = μ / (c*order^2 * M * τfac * ufac) # time step for pseudo timestepping
     #τ = μ / (4*order^2 * M * sqrt(τfac)) 
-    @info "M = $M, τ = $τ"
+    @info "M = $M, M_exact = $M_exact τ = $τ"
+    sleep(1)
 
     ## define unknowns
     u = Unknown("u"; name = "velocity", dim = 2)
     ϱ = Unknown("ϱ"; name = "density", dim = 1)
     p = Unknown("p"; name = "pressure", dim = 1)
+
+
     ## define reconstruction operator
     if order == 1
         FETypes = [H1BR{2}, L2P0{1}, L2P0{1}] # H1BR Bernardi-Raugel 2 is the dimension, L2P0 is P0 finite element
         id_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)# if reconstruct is true call apply, if false call id
-         div_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u) # Marwa div term 
-        # RT of lowest order reconstruction 
+        div_u = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u) # Marwa div term 
+    # RT of lowest order reconstruction 
     elseif order == 2
         FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}] #H1P2B add additional cell bubbles, not Bernardi-Raugel? L2P1 is P1 finite element
         id_u = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u) # RT of order 1 reconstruction
         div_u = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u) # Marwa div term 
-        
+    
     end
+
+    ## in/outflow regions
+    testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
+    rinflow = inflow_regions(velocitytype, gridtype)
+    routflow = outflow_regions(velocitytype, gridtype)
+    rhom = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow,routflow))
+    @info rinflow, routflow, rhom
+    sleep(1)
+
     ## define first sub-problem: Stokes equations to solve for velocity u
     PD = ProblemDescription("Stokes problem")
     assign_unknown!(PD, u)
     assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
     assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
-    assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...)) 
-    assign_operator!(PD, HomogeneousBoundaryData(u; regions = 1:4, kwargs...))
-    if kernel_rhs! !== nothing
-        assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = 3 * order, kwargs...))
+    if coriolistype !== NoCoriolis
+        assign_operator!(PD, LinearOperator(kernel_coriolis_linearoperator!(coriolistype), [
+        id_u], [id_u,id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
     end
-    assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = 3 * order, kwargs...))
+    if convectiontype == StandardConvection
+        assign_operator!(PD, LinearOperator(kernel_standardconvection_linearoperator!, [
+        id_u], [id_u,grad(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+    elseif convectiontype == OseenConvection
+        assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [
+        id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
+    elseif convectiontype == RotationForm
+        assign_operator!(PD, LinearOperator(kernel_rotationform_linearoperator!, [
+        id_u, div_u], [id_u,curl2(u),id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
+    elseif convectiontype == NoConvection
+    else
+        @error "discretization of convectiontype=$convectiontype not defined"
+    end
 
-    ## FVM for continuity equation
+    # Start adding hom boundary data 
+    assign_operator!(PD, LinearOperator(eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...))
+    if length(rhom) > 0 
+        assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
+    end
+    if length(rinflow) > 0 || length(routflow) > 0
+        assign_operator!(PD, InterpolateBoundaryData(u, u!; bonus_quadorder = bonus_quadorder, regions = union(rinflow,routflow), kwargs...))
+    end
+    # 
+    if kernel_rhs! !== nothing
+        assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; factor = 1, store = true, bonus_quadorder = bonus_quadorder, kwargs...))
+    end
+    assign_operator!(PD, LinearOperator(kernel_gravity!, [id_u], [id(ϱ)]; factor = 1, bonus_quadorder = bonus_quadorder, kwargs...))
+
+
+     
+
+   ## FVM for continuity equation
+    @info "timestep = $τ"
     PDT = ProblemDescription("continuity equation")
     assign_unknown!(PDT, ϱ)
     if order > 1
         assign_operator!(PDT, BilinearOperator(kernel_continuity!, [grad(ϱ)], [id(ϱ)], [id(u)]; quadorder = 2 * order, factor = -1, kwargs...))
+        # entities = ON_CELLS since it is the default
     end
     if pressure_stab > 0
         psf = pressure_stab #* xgrid[CellVolumes][1]
         assign_operator!(PDT, BilinearOperator(stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)]; entities = ON_IFACES, factor = psf, kwargs...))
     end
-    assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, store = true, kwargs...))
-    assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1 / τ, kwargs...))
-    assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, entities = ON_IFACES, kwargs...))
-    #  [jump(id(ϱ))]is test function lambda , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed 
-    ## prepare error calculation
+    assign_operator!(PDT, BilinearOperator([id(ϱ)]; quadorder = 2 * (order - 1), factor = 1, store = true, kwargs...)) # for (1/τ) (ϱ^n+1,λ)
+    assign_operator!(PDT, LinearOperator([id(ϱ)], [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1, kwargs...)) # for (1/τ) (ϱ^n,λ) on the rhs 
+    # assign_operator!(PDT, BilinearOperatorDG(kernel_upwind!, [jump(id(ϱ))], [this(id(ϱ)), other(id(ϱ))], [id(u)]; quadorder = order + 1, factor = 1, entities = ON_IFACES, kwargs...))
+    # [jump(id(ϱ))]is test function lambda [λ] , [this(id(ϱ)), other(id(ϱ))] is the the flux multlplied by lambda_upwind. [id(u)] is the function u that is needed
+    # Start adding inflow 
+    ## upwind operator with variable time step
+    D = nothing
+    brho = nothing
+    one_vector = nothing
+    rowsums = nothing
+    sol = nothing
+    rho_mean = M_exact/sum(xgrid[CellVolumes])
+
+    function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
+    fill!(D.entries.cscmatrix.nzval, 0)
+    fill!(brho.entries, 0)
+    assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))], 
+     [this(id(1)), other(id(1))], [id(1)]; factor = 1, quadorder = order+1, entities = 
+     ON_IFACES), sol)
+
+    ## check if matrix is diagonally dominant
+    mul!(rowsums, D.entries, one_vector)
+
+    ## if not, use the smaller τ
+     tau = min(extrema(abs.(xgrid[CellVolumes]./rowsums))[1]/2, τ)
+     print(" (τ = $τ) ")
+
+    if length(rinflow) > 0
+        assemble!(brho, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(1)]; factor = -1 , bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
+    end
+    if length(routflow) > 0
+        assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
+    end
+
+    if stab1[2] > 0
+        assemble!(D, BilinearOperatorDG(multiply_h_bilinear!(stab1[1]),[jump(id(1))]; factor = stab1[2], entities = ON_IFACES, kwargs...)) 
+    end
+    if stab2[2] > 0
+        hmean = sum(xgrid[FaceVolumes])/length(xgrid[FaceVolumes])
+        assemble!(D, BilinearOperator([id(1)]; factor = hmean^stab2[1]*stab2[2], kwargs...)) 
+        assemble!(brho, LinearOperator([id(1)]; factor = hmean^stab2[1]*rho_mean*stab2[2], kwargs...)) 
+    end
+    
+    ExtendableFEMBase.add!(A, D.entries; factor = tau)
+    b .+= tau * brho.entries
+    end
+    assign_operator!(PDT, CallbackOperator(callback!, [u]; linearized_dependencies = [ϱ,ϱ], modifies_rhs = false, kwargs..., name = "upwind matrix D scaled by tau"))
+
     EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
     ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
     #NDofs = zeros(Int, nrefs)
     #Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are 
+    ## prepare error calculation
+    EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
+    ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+    MassIntegrator = ItemIntegrator([id(ϱ)]; resultdim = 1, kwargs...)
+    NDofs = zeros(Int, nrefs)
+    Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are various errors 
 
     sol = nothing
     #xgrid = nothing
@@ -353,11 +469,22 @@ function run_single(data; kwargs...)
     interpolate!(sol[ϱ], ϱ!)
     #NDofs[lvl] = length(sol.entries)
 
+    D = FEMatrix(FES[2], FES[2])
+    brho = FEVector(FES[2])
+    one_vector = ones(Float64, size(D.entries,1))
+    rowsums = zeros(Float64, size(D.entries,1))
+
+    M_start = sum(evaluate(MassIntegrator, sol))
     ## solve the two problems iteratively [1] >> [2] >> [1] >> [2] ...
     SC1 = SolverConfiguration(PD; init = sol, maxiterations = 1, target_residual = target_residual, constant_matrix = true, kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
     sol, nits = iterate_until_stationarity([SC1, SC2]; energy_integrator = EnergyIntegrator, maxsteps = maxsteps, init = sol, kwargs...)
-  
+
+    ## calculate mass
+    Mend = sum(evaluate(MassIntegrator, sol))
+     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
+
+    # Untill here :D 
 
     ## save data
     data["ndofs"] = length(sol.entries)

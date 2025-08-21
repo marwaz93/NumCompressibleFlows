@@ -20,6 +20,23 @@ using ColorTypes
 quickactivate(@__DIR__, "NumCompressibleFlows")
 mkpath(plotsdir("compressible_stokes/convegence_history"))
 
+function filename_plots(data; prefix = "", free_parameter = "")
+    μ = data["μ"] 
+    c = data["c"]
+    γ = data["γ"]
+    stab1 = data["stab1"]
+    stab2 = data["stab2"]
+    ϵ = 1 - stab1[1]
+    α = stab2[1]
+    c1 = stab1[2]
+    c2 = stab2[2]
+    velocitytype = data["velocitytype"]
+    densitytype = data["densitytype"]
+     sname = savename((@dict μ c γ ))
+    sname = "plots/compressible_stokes/convegence_history/" * "ϵ=$(ϵ)_"*"α=$(α)_c1=$(c1)_"*"c2=$(c2)_" * sname * prefix * ".png"
+    return sname
+end
+
 default_args = Dict(
     # problem parameters
     "μ" => 1,
@@ -29,10 +46,11 @@ default_args = Dict(
     "M" => 1,
     # solving options
     "τfac" => 1,
-    "ufac" => 1000,
+    "ufac" => 1,
     "nrefs" => 1,
     "order" => 1,
     "pressure_stab" => 0,
+    "bonus_quadorder" => 4,
     "maxsteps" => 5000,
     "target_residual" => 1.0e-11,
     "reconstruct" => true,
@@ -45,6 +63,8 @@ default_args = Dict(
     "gridtype" => Mountain2D,
     "pressure_in_f" => false,
     "laplacian_in_rhs" => true,
+    "stab1" => (1-0.1,0),
+    "stab2" => (1.5,0),
 )
 
 function load_data(; kwargs...)
@@ -78,20 +98,20 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
-    xticks = [10,1e2,1e3,1e4,1e5]
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    yticks = [1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
+    xticks = [1e1,1e2,1e3,1e4,1e5]
+    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
     Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
     Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
     Plotter.plot!(NDoFs, 200*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
     Plotter.plot!(NDoFs, 200*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
-    Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
+    #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
     
-    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "ndofs",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "ndofs",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
-    Plotter.savefig("Aconvegence_history.png")
+    Plotter.savefig(filename_plots(data))
 end
 
 function main(;
@@ -99,7 +119,9 @@ function main(;
     M = 1,
     c = 1,
     μ = 1,
-    λ = -2*μ / 3,
+    #λ = -2*μ / 3,
+    λ = 0,
+    γ=1,
     ufac = 1,
     τfac = 4,
     order = 1,
@@ -118,11 +140,12 @@ function main(;
     bonus_quadorder_bnd = bonus_quadorder,
     maxsteps = 5000,
     target_residual = 1.0e-11,
-    stab1 = (1-0.1,μ/c),
-    stab2 = (1.5,μ/c),
+    #stab1 = (1-0.1,μ/c),
+    #stab2 = (1.5,μ/c),
+    stab1 = (1-0.1,0),
+    stab2 = (1.5,0),
     Plotter = nothing,
     reconstruct = true,
-    γ=1,
     kwargs...
 )
 
@@ -341,7 +364,7 @@ end
 
 #Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_M=$(M)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)22_eos=$(eostype).png")
 #Plotter.savefig("DensityStab_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
-Plotter.savefig("Aconvegence_history_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_λ$(λ).png")
+Plotter.savefig("Aconvegence_history_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
 
 return Results, plt
 end
