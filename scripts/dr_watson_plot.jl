@@ -34,22 +34,30 @@ function filename(data)
     maxsteps = data["maxsteps"]
     pressure_stab = data["pressure_stab"]
     bonus_quadorder = data["bonus_quadorder"]
-    # data of the problem
-    velocitytype = data["velocitytype"]
-    densitytype = data["densitytype"]
-    eostype = data["eostype"]
-    gridtype = data["gridtype"]
-    convectiontype = data["convectiontype"]
-    coriolistype = data["coriolistype"]
+    
+    # data of the problem (convert types to abbreviated strings for savename)
+    # Create shorter abbreviations for the types
+    vtype = replace(string(data["velocitytype"]), "Velocity" => "V")
+    dtype = replace(string(data["densitytype"]), "Density" => "D")
+    etype = replace(string(data["eostype"]), "Law" => "")
+    gtype = replace(string(data["gridtype"]), "2D" => "")
+    ctype = replace(string(data["convectiontype"]), "Convection" => "Conv")
+    cortype = replace(string(data["coriolistype"]), "Coriolis" => "Cor")
+    
     laplacian_in_rhs = data["laplacian_in_rhs"]
     stab1 = data["stab1"]
     stab2 = data["stab2"]
     
+    # Use shorter parameter names and only include essential ones
+    essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype laplacian_in_rhs stab1 stab2
+
     # sname
-    sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
+    # sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
+    sname = savename(essential_params)
     sname = "data/projects/compressible_stokes/" * sname
     return sname
 end
+
 
 function run_single(data; kwargs...)
     # problem parameters
@@ -299,8 +307,8 @@ function filename_plots(data; prefix = "", free_parameter = "")
     α = stab2[1]
     c1 = stab1[2]
     c2 = stab2[2]
-    velocitytype = data["velocitytype"]
-    densitytype = data["densitytype"]
+    velocitytype = string(data["velocitytype"])
+    densitytype = string(data["densitytype"])
      sname = savename((@dict μ c γ ))
     sname = "plots/compressible_stokes/convegence_history/" * "ϵ=$(ϵ)_"*"α=$(α)_c1=$(c1)_"*"c2=$(c2)_" * sname * prefix * ".png"
     return sname
