@@ -44,9 +44,10 @@ function filename(data)
     laplacian_in_rhs = data["laplacian_in_rhs"]
     stab1 = data["stab1"]
     stab2 = data["stab2"]
-    
+
     # sname
-    sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
+    # sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2); allowedtypes = (Real, String, SubString, Symbol, TestDensity,TestVelocity,EOSType,GridFamily,ConvectionType,CoriolisType),ignores = (@dict λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
+      sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
     sname = "data/projects/compressible_stokes/" * sname
     return sname
 end
@@ -83,7 +84,7 @@ function run_single(data; kwargs...)
     @show data, typeof(data)
 
     ## load data for testcase
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data(velocitytype, densitytype, eostype; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac , nrefs = nrefs)
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data( velocitytype, densitytype , eostype  ; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac,τfac = τfac , nrefs = nrefs , kwargs...)
     # added new for the type version
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
     #xgrid = grid(gridtype; nref = nrefs)
@@ -288,6 +289,11 @@ end
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
 mkpath(plotsdir("compressible_stokes/convegence_history"))
+mkpath(plotsdir("compressible_stokes/parameter_studies_μ/"))
+mkpath(plotsdir("compressible_stokes/parameter_studies_γ/"))
+mkpath(plotsdir("compressible_stokes/parameter_studies_c/"))
+mkpath(plotsdir("compressible_stokes/parameter_studies_cμ/"))
+mkpath(plotsdir("compressible_stokes/parameter_studies_c1/"))
 
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"] 
@@ -301,8 +307,29 @@ function filename_plots(data; prefix = "", free_parameter = "")
     c2 = stab2[2]
     velocitytype = data["velocitytype"]
     densitytype = data["densitytype"]
-     sname = savename((@dict μ c γ ))
-    sname = "plots/compressible_stokes/convegence_history/" * "ϵ=$(ϵ)_"*"α=$(α)_c1=$(c1)_"*"c2=$(c2)_" * sname * prefix * ".png"
+    reconstruct = data["reconstruct"]
+
+    if free_parameter == "μ"
+        sname = savename((@dict c γ ϵ α c1 c2 ))
+    elseif free_parameter == "γ"
+        sname = savename((@dict μ c ϵ α c1 c2 ))
+    elseif free_parameter == "c"
+        sname = savename((@dict μ γ ϵ α c1 c2 ))
+    elseif free_parameter == "cμ"
+        sname = savename((@dict velocitytype reconstruct γ ϵ α c1 c2 ))
+    elseif free_parameter == "c1"
+        sname = savename((@dict μ c γ ϵ α c2 ))
+    else
+        sname = savename((@dict μ c γ ϵ α c1 c2 ))
+    end
+
+    if free_parameter !== ""
+        sname = "plots/compressible_stokes/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
+    else
+        sname = "plots/compressible_stokes/convegence_history/" * sname * prefix * ".png"
+        
+    end
+    
     return sname
 end
 
@@ -345,6 +372,29 @@ function load_data(; kwargs...)
 end
 
 
+function plot_single(; Plotter = PyPlot, kwargs...) # Does not really work 
+
+    data = load_data(; kwargs...)
+    @show data
+    data, ~ = produce_or_load(run_single, data, filename = filename) # ~ is used to ignore the second returned variable of produce_or_load function
+    xgrid = data["grid"]
+    sol = data["solution"]
+    @show sol
+    #repair_grid!(xgrid)
+    #repair_grid!(sol[1].FES.xgrid)
+    #repair_grid!(sol[2].FES.xgrid)
+
+    #plt = GridVisualizer(; Plotter = Plotter, layout = (1, 2), clear = true, size = (1000, 1000))
+    #scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
+    #vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
+    #scalarplot!(plt[1, 2], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
+
+    ## save
+    
+    #Plotter.savefig(filename_plots(data; prefix = "_Solutions"))
+end
+
+
 function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, kwargs...)
 
     data = load_data(; kwargs...)
@@ -378,7 +428,211 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     Plotter.plot!(NDoFs, 200*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
     #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
     
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "ndofs",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
     Plotter.savefig(filename_plots(data))
+end
+
+function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
+
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(μ), length(nrefs))
+    H1u = zeros(Float64, length(μ), length(nrefs))
+    L2ϱ = zeros(Float64, length(μ), length(nrefs))
+   
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(μ)
+            data["μ"] = μ[j]
+            data, ~ = produce_or_load(run_single, data, filename = filename)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = μ
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        #Plotter.plot!(μ, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+        Plotter.plot!(μ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(μ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "μ", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(μ, L2u; xlabel = "μ", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "μ"))
+end
+
+function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(c1), length(nrefs))
+    H1u = zeros(Float64, length(c1), length(nrefs))
+    L2ϱ = zeros(Float64, length(c1), length(nrefs))
+   
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(c1)
+                data["stab1"] = (c1[j], 1 )
+                data, ~ = produce_or_load(run_single, data, filename = filename)
+                L2u[j,n] = data["Error(L2,u)"]
+                H1u[j,n] = data["Error(H1,u)"]
+                L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = c1
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+        # Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c1, L2u; xlabel = "c1", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c1"))
+end
+
+function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
+
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(γ), length(nrefs))
+    H1u = zeros(Float64, length(γ), length(nrefs))
+    L2ϱ = zeros(Float64, length(γ), length(nrefs))
+   
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(γ)
+            data["γ"] = γ[j]
+            data, ~ = produce_or_load(run_single, data, filename = filename)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = γ
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        #Plotter.plot!(γ, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+        Plotter.plot!(γ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(γ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "γ", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(γ, L2u; xlabel = "γ", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "γ"))
+end
+
+function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], Plotter = Plots, kwargs...)
+
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(c), length(nrefs))
+    H1u = zeros(Float64, length(c), length(nrefs))
+    L2ϱ = zeros(Float64, length(c), length(nrefs))
+   
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(c)
+            data["c"] = c[j]
+            data, ~ = produce_or_load(run_single, data, filename = filename)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1,1e+2]
+    xticks = c
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        #Plotter.plot!(c, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c"))
+end
+
+function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], μ = [1e-8,1e-6,1e-4,1e-2,1,1e+2] , Plotter = Plots, kwargs...)
+
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(c), length(μ))
+    H1u = zeros(Float64, length(c), length(μ))
+    L2ϱ = zeros(Float64, length(c), length(μ))
+   
+
+    for n = 1 : length(μ)
+        data["μ"] = μ[n]
+        for j = 1 : length(c)
+            data["c"] = c[j]
+            data, ~ = produce_or_load(run_single, data, filename = filename)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" μ =  $μk" for μk in μ]
+    yticks = [1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1]
+    xticks = c
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(μ)
+        #Plotter.plot!(c, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{μ} = %$(μ[n])") # "||∇(u-u_h)|| μ = $(μ[n])"
+        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{μ} = %$(μ[n])") # "||ϱ - ϱ_h|| μ= $(μ[n])"
+    end
+    #for n = 1 : length(μ)
+        #Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")    
+    #end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "cμ"))
 end

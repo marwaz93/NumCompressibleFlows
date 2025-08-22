@@ -105,14 +105,17 @@ function prepare_data(
     M = 1,
     c = 1,
     μ = 1,
+    γ = 1,
     ufac = 1,
     laplacian_in_rhs = true,
     pressure_in_f = false,
-    λ = -2*μ / 3,
+    λ = 0,
     convectiontype = NoConvection,
     coriolistype = NoCoriolis,
     kwargs...)
 
+    @info "Marwaaa Velocity is $TVT"
+    
     ## get stream function and density for test types
     ξ = streamfunction(TVT;ufac = ufac, kwargs...)
     ϱ = density(TDT; c = c, M = M, kwargs...) 
@@ -160,10 +163,12 @@ function prepare_data(
 
     # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
     if pressure_in_f # Gradient_robustness 
-        if EOSType <: IdealGasLaw
+        if EOSType <: IdealGasLaw && γ == 1
             f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p 
-        elseif EOSType <: PowerLaw
-            γ = EOSType.parameters[1]
+        elseif EOSType <: PowerLaw || γ > 1
+            if EOSType <: PowerLaw
+                γ = EOSType.parameters[1]
+            end
             @assert γ > 1
             f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p 
         end
@@ -175,10 +180,12 @@ function prepare_data(
         end
            
     else # Well_balancedness 
-        if EOSType <: IdealGasLaw
+        if EOSType <: IdealGasLaw && γ == 1
             g = c * Symbolics.gradient(log(ϱ), [x, y]) # ϱg = ∇p  
-        elseif EOSType <: PowerLaw
-            γ = EOSType.parameters[1]
+        elseif EOSType <: PowerLaw || γ > 1
+            if EOSType <: PowerLaw
+                γ = EOSType.parameters[1]
+            end
             @assert γ > 1
             g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # ϱg = ∇p 
         end
