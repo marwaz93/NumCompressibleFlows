@@ -45,6 +45,17 @@ export multiply_h_bilinear!, multiply_h_linear!
 #include("compressible_stokes.jl")
 #export load_testcase_data, filename, run_single
 
+## problem: loading and saving grids leads to ElementGeometries -> DataType conversion (by DrWarson/JLD2?) which has to be reverted
+## after loading (until this is fixed ina more elegant way)
+function repair_grid!(xgrid::ExtendableGrid)
+    xgrid[CellGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[CellGeometries][1], num_cells(xgrid))
+    xgrid[FaceGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[FaceGeometries][1], length(xgrid.components[FaceGeometries]))
+    xgrid[BFaceGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[BFaceGeometries][1], length(xgrid.components[BFaceGeometries]))
 
+    xgrid[UniqueCellGeometries] = Vector{ElementGeometries}([xgrid.components[CellGeometries][1]])
+    xgrid[UniqueFaceGeometries] = Vector{ElementGeometries}([xgrid.components[FaceGeometries][1]])
+    xgrid[UniqueBFaceGeometries] = Vector{ElementGeometries}([xgrid.components[BFaceGeometries][1]])
+end
+export repair_grid!
 
 end # module NumCompressibleFlows

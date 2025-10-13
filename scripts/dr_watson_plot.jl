@@ -17,6 +17,7 @@ using Colors
 using ColorTypes
 #gr()
 
+
 function filename(data)
     # problem parameters
     μ = data["μ"]
@@ -50,10 +51,12 @@ function filename(data)
     
     # Use shorter parameter names and only include essential ones
     essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype laplacian_in_rhs stab1 stab2
+   
+   
 
     # sname
     # sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
-    sname = savename(essential_params)
+    sname = savename(essential_params; allowedtypes = (Real, String, SubString, Symbol, Tuple{Real, Real}))
     sname = "data/projects/compressible_stokes/" * sname
     return sname
 end
@@ -106,11 +109,11 @@ function run_single(data; kwargs...)
     @info "M = $M, M_exact = $M_exact τ = $τ"
     sleep(1)
 
+
     ## define unknowns
     u = Unknown("u"; name = "velocity", dim = 2)
     ϱ = Unknown("ϱ"; name = "density", dim = 1)
     p = Unknown("p"; name = "pressure", dim = 1)
-
 
     ## define reconstruction operator
     if order == 1
@@ -135,6 +138,7 @@ function run_single(data; kwargs...)
 
     ## define first sub-problem: Stokes equations to solve for velocity u
     PD = ProblemDescription("Stokes problem")
+
     assign_unknown!(PD, u)
     assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
     assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...)) # Marwa div term 
@@ -213,10 +217,10 @@ function run_single(data; kwargs...)
      print(" (τ = $τ) ")
 
     if length(rinflow) > 0
-        assemble!(brho, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(1)]; factor = -1 , bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = rinflow, kwargs...))    
+        assemble!(brho, LinearOperatorDG(kernel_inflow!(u!,ϱ!), [id(1)]; factor = -1 , bonus_quadorder = bonus_quadorder, entities = ON_BFACES, regions = rinflow, kwargs...))    
     end
     if length(routflow) > 0
-        assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder_bnd, entities = ON_BFACES, regions = routflow, kwargs...)) 
+        assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder, entities = ON_BFACES, regions = routflow, kwargs...)) 
     end
 
     if stab1[2] > 0
@@ -278,6 +282,8 @@ function run_single(data; kwargs...)
     data["ndofs"] = length(sol.entries)
     data["solution"] = sol
     data["grid"] = xgrid
+    data["unknown_u"] = u
+    data["unknown_ϱ"] = ϱ
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
@@ -295,12 +301,12 @@ function run_single(data; kwargs...)
 end
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
-mkpath(plotsdir("compressible_stokes/convegence_history"))
-mkpath(plotsdir("compressible_stokes/parameter_studies_μ/"))
-mkpath(plotsdir("compressible_stokes/parameter_studies_γ/"))
-mkpath(plotsdir("compressible_stokes/parameter_studies_c/"))
-mkpath(plotsdir("compressible_stokes/parameter_studies_cμ/"))
-mkpath(plotsdir("compressible_stokes/parameter_studies_c1/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_convegence_history"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_μ/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_γ/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_cμ/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c1/"))
 
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"] 
@@ -315,25 +321,28 @@ function filename_plots(data; prefix = "", free_parameter = "")
     velocitytype = string(data["velocitytype"])
     densitytype = string(data["densitytype"])
     reconstruct = data["reconstruct"]
+    eostype = data["eostype"]
+    gridtype = data["gridtype"]
+    convectiontype = data["convectiontype"]
 
     if free_parameter == "μ"
-        sname = savename((@dict c γ ϵ α c1 c2 ))
+        sname = savename((@dict c γ ϵ α c1 c2 velocitytype densitytype reconstruct ))
     elseif free_parameter == "γ"
-        sname = savename((@dict μ c ϵ α c1 c2 ))
+        sname = savename((@dict μ c ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "c"
-        sname = savename((@dict μ γ ϵ α c1 c2 ))
+        sname = savename((@dict μ γ ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "cμ"
-        sname = savename((@dict velocitytype reconstruct γ ϵ α c1 c2 ))
+        sname = savename((@dict velocitytype reconstruct γ ϵ α c1 c2 velocitytype densitytype  ))
     elseif free_parameter == "c1"
-        sname = savename((@dict μ c γ ϵ α c2 ))
+        sname = savename((@dict μ c γ ϵ α c2 velocitytype densitytype reconstruct))
     else
-        sname = savename((@dict μ c γ ϵ α c1 c2 ))
+        sname = savename((@dict μ c γ ϵ α c1 c2 velocitytype densitytype reconstruct ))
     end
 
     if free_parameter !== ""
-        sname = "plots/compressible_stokes/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes/ENUMATH_parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
     else
-        sname = "plots/compressible_stokes/convegence_history/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes/ENUMATH_convegence_history/" * sname * prefix * ".png"
         
     end
     
@@ -350,7 +359,7 @@ default_args = Dict(
     # solving options
     "τfac" => 1,
     "ufac" => 1,
-    "nrefs" => 1,
+    "nrefs" => 4,
     "order" => 1,
     "pressure_stab" => 0,
     "bonus_quadorder" => 4,
@@ -379,26 +388,43 @@ function load_data(; kwargs...)
 end
 
 
-function plot_single(; Plotter = PyPlot, kwargs...) # Does not really work 
+function plot_single(; Plotter = PyPlot, force = false, kwargs...) # Does not really work 
 
     data = load_data(; kwargs...)
     @show data
-    data, ~ = produce_or_load(run_single, data, filename = filename) # ~ is used to ignore the second returned variable of produce_or_load function
+    data, ~ = produce_or_load(run_single, data, filename = filename, force = force) # ~ is used to ignore the second returned variable of produce_or_load function
     xgrid = data["grid"]
     sol = data["solution"]
+    u = data["unknown_u"]
+    ϱ = data["unknown_ϱ"]
     @show sol
-    #repair_grid!(xgrid)
-    #repair_grid!(sol[1].FES.xgrid)
-    #repair_grid!(sol[2].FES.xgrid)
+    repair_grid!(xgrid)
+    repair_grid!(sol[1].FES.xgrid)
+    repair_grid!(sol[2].FES.xgrid)
 
-    #plt = GridVisualizer(; Plotter = Plotter, layout = (1, 2), clear = true, size = (1000, 1000))
+    #plt = GridVisualizer(; Plotter = Plotter, layout = (1, 1), clear = true, size = (1000, 1000))
     #scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[u]; abs = true), 1, :), levels = 0, colorbarticks = 7)
-    #vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
-    #scalarplot!(plt[1, 2], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
+    # vectorplot!(plt[1, 1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), rasterpoints = 10, clear = false, title = "u_h (abs + quiver)")
+    #scalarplot!(plt[1, 1], xgrid, view(nodevalues(sol[ϱ]), 1, :), levels = 11, title = "ϱ_h")
+
+
+    ## plot
+   #PyPlot.rc("font", size=60)
+    pl = GridVisualizer(; Plotter = Plotter, layout = (1,2), clear = true,show=true, resolution = (1000,500))
+    scalarplot!(pl[1,1], xgrid, view(nodevalues(sol[u]; abs = true),1,:), levels = 0, colorbarticks = 7, fontsize = 60)
+    vectorplot!(pl[1,1], xgrid, eval_func_bary(PointEvaluator([id(u)], sol)), clear = false, fontsize = 60) # title = L"\mathbf{u}_h "
+    scalarplot!(pl[1,2], xgrid, view(nodevalues(sol[ϱ]),1,:), levels = 11, fontsize = 60)  # title = L"ϱ_h" 
+    #gridplot!(pl[2,2], xgrid)
 
     ## save
     
     #Plotter.savefig(filename_plots(data; prefix = "_Solutions"))
+
+       scene = GridVisualize.reveal(pl)
+       return GridVisualize.save(filename_plots(data; prefix = "_Solutions"), scene; Plotter = Plotter)
+
+
+
 end
 
 
@@ -481,7 +507,7 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
     Plotter.savefig(filename_plots(data; free_parameter = "μ"))
 end
 
-function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
+function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2,1e+3,1e+4], Plotter = Plots, kwargs...)
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c1), length(nrefs))
@@ -492,7 +518,7 @@ function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-
     for n = 1 : length(nrefs)
         data["nrefs"] = nrefs[n]
         for j = 1 : length(c1)
-                data["stab1"] = (c1[j], 1 )
+                data["stab1"] = (0.9, c1[j])
                 data, ~ = produce_or_load(run_single, data, filename = filename)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
@@ -502,17 +528,17 @@ function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-
 
     ## plot
     labels = [" level $n" for n in nrefs]
-    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
     xticks = c1
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
     for n = 1 : length(nrefs)
-        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-        # Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+        #Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+         Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
     end
     for n = 1 : length(nrefs)
         Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
     end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
+    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
         
     ##
     print_table(c1, L2u; xlabel = "c1", ylabels = "|| u - u_h || ".* labels)
@@ -632,10 +658,10 @@ function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1
         #Plotter.plot!(c, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{μ} = %$(μ[n])") # "||∇(u-u_h)|| μ = $(μ[n])"
         Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{μ} = %$(μ[n])") # "||ϱ - ϱ_h|| μ= $(μ[n])"
     end
-    #for n = 1 : length(μ)
-        #Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")    
-    #end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
+    for n = 1 : length(μ)
+        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")    
+    end
+    #Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
         
     ##
     print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)

@@ -268,7 +268,7 @@ end
 
 #Plotter.savefig("RigidBR_ConvParam$(conv_parameter)_p_f=$(pressure_in_f)_l_rhs=$(laplacian_in_rhs)_μ=$(μ)_cM=$(c)_M=$(M)_reconstruct=$(reconstruct)_velocity=$(velocitytype)_ϱ=$(densitytype)22_eos=$(eostype).png")
 #Plotter.savefig("DensityStab_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
-Plotter.savefig("Aconvegence_history_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
+Plotter.savefig("ENUMATH_S1$(stab1)_S2$(stab2)_(velocitytype)_$(densitytype)_$(eostype)_μ$(μ)_c$(c)_M$(M).png")
 
 # return Results, plt
 return Results
