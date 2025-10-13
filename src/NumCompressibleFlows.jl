@@ -15,7 +15,7 @@ using DrWatson
 
 include("problem_definitions.jl")
 export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, RigidBodyRotation
-export TestDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
+export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
 export EOSType, IdealGasLaw, PowerLaw
 export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm
 export CoriolisType, NoCoriolis, BetaPlaneApproximation

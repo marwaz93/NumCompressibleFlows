@@ -9,6 +9,7 @@ using Symbolics
 using LinearAlgebra
 
 abstract type TestDensity end
+abstract type ConstantDensity <: TestDensity end
 abstract type LinearDensity <: TestDensity end
 abstract type ExponentialDensity <: TestDensity end
 abstract type ExponentialDensityRBR <: TestDensity end
@@ -96,6 +97,7 @@ density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = M *  exp(- y^3 
 #density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = exp(- y /  c) / M  # e^(-y/c_M)/ M  ... Objection: whrere is x^3 ?
 density(::Type{<:ExponentialDensityRBR}; c = 1, M = 1, kwargs...) =  M * exp( (x^2+y^2) /  (2*c)) 
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
+density(::Type{<:ConstantDensity}; c = 1, M = 1, kwargs...) = M 
 
 
 function prepare_data(
