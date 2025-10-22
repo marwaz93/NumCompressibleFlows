@@ -93,6 +93,11 @@ function run_single(data; kwargs...)
     data = Dict{String, Any}(data)
     @show data, typeof(data)
 
+    if target_residual / max(stab1[2],stab2[2]) < 1e-15
+        target_residual = 1e-15 * max(stab1[2],stab2[2])
+        @warn "reset target residual to $(target_residual) due to very large stabilization constants"
+    end
+
     ## load data for testcase
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data( velocitytype, densitytype , eostype  ; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac,τfac = τfac , nrefs = nrefs , kwargs...)
     # added new for the type version
@@ -363,7 +368,7 @@ default_args = Dict(
     "order" => 1,
     "pressure_stab" => 0,
     "bonus_quadorder" => 4,
-    "maxsteps" => 5000,
+    "maxsteps" => 2000,
     "target_residual" => 1.0e-11,
     "reconstruct" => true,
     # data of the problem
