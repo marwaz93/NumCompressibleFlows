@@ -122,6 +122,11 @@ function run_single(data; kwargs...)
     data = Dict{String, Any}(data)
     @show data, typeof(data)
 
+    if target_residual / max(stab1[2],stab2[2]) < 1e-15
+        target_residual = 1e-15 * max(stab1[2],stab2[2])
+        @warn "reset target residual to $(target_residual) due to very large stabilization constants"
+    end
+
     ## load data for testcase
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data( velocitytype, densitytype , eostype  ; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac,τfac = τfac , nrefs = nrefs , kwargs...)
     # added new for the type version
@@ -373,13 +378,43 @@ function filename_plots(data; prefix = "", free_parameter = "")
 
     if free_parameter !== ""
         sname = "plots/compressible_stokes/ENUMATH_parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
-    else
+  else
         sname = "plots/compressible_stokes/ENUMATH_convegence_history/" * sname * prefix * ".png"
         
     end
     
     return sname
 end
+
+default_args = Dict(
+    # problem parameters
+    "μ" => 1,
+    "λ" => 0,
+    "γ" => 1,
+    "c" => 1,
+    "M" => 1,
+    # solving options
+    "τfac" => 1,
+    "ufac" => 1,
+    "nrefs" => 4,
+    "order" => 1,
+    "pressure_stab" => 0,
+    "bonus_quadorder" => 4,
+    "maxsteps" => 2000,
+    "target_residual" => 1.0e-11,
+    "reconstruct" => true,
+    # data of the problem
+    "velocitytype" => ZeroVelocity,
+    "densitytype" => ExponentialDensity,
+    "convectiontype" => NoConvection,
+    "coriolistype" => NoCoriolis,
+    "eostype" => IdealGasLaw,
+    "gridtype" => Mountain2D,
+    "pressure_in_f" => false,
+    "laplacian_in_rhs" => true,
+    "stab1" => (1-0.1,0),
+    "stab2" => (1.5,0),
+)
 
 
 function load_data(; kwargs...)
