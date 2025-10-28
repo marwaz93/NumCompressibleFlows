@@ -17,6 +17,35 @@ using Colors
 using ColorTypes
 #gr()
 
+default_args = Dict(
+    # problem parameters
+    "μ" => 1,
+    "λ" => 0,
+    "γ" => 1,
+    "c" => 1,
+    "M" => 1,
+    # solving options
+    "τfac" => 4,
+    "ufac" => 1,
+    "nrefs" => 4,
+    "order" => 1,
+    "pressure_stab" => 0,
+    "bonus_quadorder" => 4,
+    "maxsteps" => 5000,
+    "target_residual" => 1.0e-15,
+    "reconstruct" => true,
+    # data of the problem
+    "velocitytype" => ZeroVelocity,
+    "densitytype" => ExponentialDensity,
+    "convectiontype" => NoConvection,
+    "coriolistype" => NoCoriolis,
+    "eostype" => IdealGasLaw,
+    "gridtype" => Mountain2D,
+    "pressure_in_f" => false,
+    "laplacian_in_rhs" => true,
+    "stab1" => (1-0.1,0),
+    "stab2" => (1.5,0),
+)
 
 function filename(data)
     # problem parameters
@@ -307,6 +336,7 @@ mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_γ/"))
 mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c/"))
 mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_cμ/"))
 mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c1/"))
+mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c2/"))
 
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"] 
@@ -326,17 +356,19 @@ function filename_plots(data; prefix = "", free_parameter = "")
     convectiontype = data["convectiontype"]
 
     if free_parameter == "μ"
-        sname = savename((@dict c γ ϵ α c1 c2 velocitytype densitytype reconstruct ))
+        sname = savename((@dict c γ ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "γ"
         sname = savename((@dict μ c ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "c"
         sname = savename((@dict μ γ ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "cμ"
-        sname = savename((@dict velocitytype reconstruct γ ϵ α c1 c2 velocitytype densitytype  ))
+        sname = savename((@dict γ ϵ α c1 c2 velocitytype densitytype reconstruct))
     elseif free_parameter == "c1"
         sname = savename((@dict μ c γ ϵ α c2 velocitytype densitytype reconstruct))
+    elseif free_parameter == "c2"
+        sname = savename((@dict μ c γ ϵ α c1 velocitytype densitytype reconstruct))
     else
-        sname = savename((@dict μ c γ ϵ α c1 c2 velocitytype densitytype reconstruct ))
+        sname = savename((@dict μ c γ ϵ α c1 c2 velocitytype densitytype reconstruct))
     end
 
     if free_parameter !== ""
@@ -349,35 +381,6 @@ function filename_plots(data; prefix = "", free_parameter = "")
     return sname
 end
 
-default_args = Dict(
-    # problem parameters
-    "μ" => 1,
-    "λ" => 0,
-    "γ" => 1,
-    "c" => 1,
-    "M" => 1,
-    # solving options
-    "τfac" => 1,
-    "ufac" => 1,
-    "nrefs" => 4,
-    "order" => 1,
-    "pressure_stab" => 0,
-    "bonus_quadorder" => 4,
-    "maxsteps" => 5000,
-    "target_residual" => 1.0e-11,
-    "reconstruct" => true,
-    # data of the problem
-    "velocitytype" => ZeroVelocity,
-    "densitytype" => ExponentialDensity,
-    "convectiontype" => NoConvection,
-    "coriolistype" => NoCoriolis,
-    "eostype" => IdealGasLaw,
-    "gridtype" => Mountain2D,
-    "pressure_in_f" => false,
-    "laplacian_in_rhs" => true,
-    "stab1" => (1-0.1,0),
-    "stab2" => (1.5,0),
-)
 
 function load_data(; kwargs...)
     data = deepcopy(default_args) 
@@ -450,8 +453,8 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
-    xticks = [1e1,1e2,1e3,1e4,1e5]
+    yticks = [1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
+    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
@@ -507,7 +510,7 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
     Plotter.savefig(filename_plots(data; free_parameter = "μ"))
 end
 
-function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2,1e+3,1e+4], Plotter = Plots, kwargs...)
+function plot_parameter_study_stab1(;  nrefs = [3,4,5], c1 = [1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c1), length(nrefs))
@@ -532,7 +535,7 @@ function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-
     xticks = c1
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
     for n = 1 : length(nrefs)
-        #Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
          Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
     end
     for n = 1 : length(nrefs)
@@ -545,6 +548,45 @@ function plot_parameter_study_stab1(; nrefs = [3], c1 = [1e-9,1e-8,1e-7,1e-6,1e-
         
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "c1"))
+end
+function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(c2), length(nrefs))
+    H1u = zeros(Float64, length(c2), length(nrefs))
+    L2ϱ = zeros(Float64, length(c2), length(nrefs))
+   
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(c2)
+                data["stab2"] = (1.5, c2[j])
+                data, ~ = produce_or_load(run_single, data, filename = filename)
+                L2u[j,n] = data["Error(L2,u)"]
+                H1u[j,n] = data["Error(H1,u)"]
+                L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = c2
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c2, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
+         Plotter.plot!(c2, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c2, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c2", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c2, L2u; xlabel = "c2", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c2"))
 end
 
 function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
