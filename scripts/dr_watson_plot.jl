@@ -257,9 +257,11 @@ function run_single(data; kwargs...)
         assemble!(D, BilinearOperatorDG(kernel_outflow!(u!), [id(1)]; factor = 1, bonus_quadorder = bonus_quadorder, entities = ON_BFACES, regions = routflow, kwargs...)) 
     end
 
+    ## densityjump stabilisation
     if stab1[2] > 0
-        assemble!(D, BilinearOperatorDG(multiply_h_bilinear!(stab1[1]),[jump(id(1))]; factor = stab1[2], entities = ON_IFACES, kwargs...)) 
+        assemble!(D, BilinearOperatorDG(density_jump_stab_kernel!(stab1[1], γ),[jump(id(1))],[jump(id(1))], [average(id(1))]; factor = stab1[2]*2, entities = ON_IFACES, kwargs...), sol) 
     end
+    ## density mean stabilisation
     if stab2[2] > 0
         hmean = sum(xgrid[FaceVolumes])/length(xgrid[FaceVolumes])
         assemble!(D, BilinearOperator([id(1)]; factor = hmean^stab2[1]*stab2[2], kwargs...)) 
@@ -426,7 +428,7 @@ function load_data(; kwargs...)
 end
 
 
-function plot_single(; Plotter = PyPlot, force = false, kwargs...) # Does not really work 
+function plot_single(; Plotter = PyPlot, force = false, kwargs...) 
 
     data = load_data(; kwargs...)
     @show data
@@ -488,15 +490,17 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
+    yticks = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
     xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
     Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
     Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
-    Plotter.plot!(NDoFs, 200*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
-    Plotter.plot!(NDoFs, 200*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+    Plotter.plot!(NDoFs, 0.5*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
+    Plotter.plot!(NDoFs, (1e+1)*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+    #Plotter.plot!(NDofs, 0.5*NDofs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
+    #Plotter.plot!(NDofs, 0.5*NDofs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
     #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
     
     Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))

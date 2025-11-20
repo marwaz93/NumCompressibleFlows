@@ -19,6 +19,13 @@ function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+function density_jump_stab_kernel!(exponent, γ)
+    function closure(result, input, args, qpinfo)
+        ζ = max(0,2 - γ)
+        result .= input * abs(args[1])^ζ * qpinfo.volume^exponent
+    end
+end
+
 function multiply_h_linear!(power)
     function closure(result, qpinfo)
         result .*= qpinfo.volume^power

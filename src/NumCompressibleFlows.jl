@@ -32,6 +32,7 @@ export kernel_upwind!
 export exact_error!
 export standard_gravity!
 export energy_kernel!
+export density_jump_stab_kernel!
 export eos!
 export kernel_standardconvection_linearoperator!
 export kernel_rotationform_linearoperator!
