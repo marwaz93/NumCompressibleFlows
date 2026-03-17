@@ -86,7 +86,7 @@ function filename(data)
     # sname
     # sname = savename((@dict μ λ γ c M τfac ufac nrefs order reconstruct target_residual maxsteps pressure_stab bonus_quadorder velocitytype densitytype eostype gridtype convectiontype coriolistype laplacian_in_rhs stab1 stab2))
     sname = savename(essential_params; allowedtypes = (Real, String, SubString, Symbol, Tuple{Real, Real}))
-    sname = "data/projects/compressible_stokes/" * sname
+    sname = "data/projects/compressible_stokes/" * sname # the only place changing the data file
     return sname
 end
 
@@ -337,13 +337,13 @@ function run_single(data; kwargs...)
 end
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
-mkpath(plotsdir("compressible_stokes/ENUMATH_convegence_history"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_μ/"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_γ/"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c/"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_cμ/"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c1/"))
-mkpath(plotsdir("compressible_stokes/ENUMATH_parameter_studies_c2/"))
+mkpath(plotsdir("compressible_stokes_paper/convegence_history"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_μ/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_γ/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_cμ/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c1/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c2/"))
 
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"] 
@@ -361,27 +361,28 @@ function filename_plots(data; prefix = "", free_parameter = "")
     eostype = data["eostype"]
     gridtype = data["gridtype"]
     convectiontype = data["convectiontype"]
+    nrefs = data["nrefs"]
 
     if free_parameter == "μ"
-        sname = savename((@dict c γ ϵ α c1 c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict c γ ϵ c1 velocitytype densitytype reconstruct))
     elseif free_parameter == "γ"
-        sname = savename((@dict μ c ϵ α c1 c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c ϵ c1 velocitytype densitytype reconstruct))
     elseif free_parameter == "c"
-        sname = savename((@dict μ γ ϵ α c1 c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ γ ϵ c1 velocitytype densitytype reconstruct))
     elseif free_parameter == "cμ"
-        sname = savename((@dict γ ϵ α c1 c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict nrefs γ ϵ c1 velocitytype densitytype reconstruct))
     elseif free_parameter == "c1"
-        sname = savename((@dict μ c γ ϵ α c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ velocitytype densitytype reconstruct))
     elseif free_parameter == "c2"
-        sname = savename((@dict μ c γ ϵ α c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ c1 velocitytype densitytype reconstruct))
     else
-        sname = savename((@dict μ c γ ϵ α c1 c2 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ c1 velocitytype densitytype reconstruct))
     end
 
     if free_parameter !== ""
-        sname = "plots/compressible_stokes/ENUMATH_parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes_paper/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
   else
-        sname = "plots/compressible_stokes/ENUMATH_convegence_history/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes_paper/convegence_history/" * sname * prefix * ".png"
         
     end
     
@@ -490,8 +491,8 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e+1,1e+2]
-    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
+    yticks = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2,1e3]
+    xticks = [1e1,1e2,1e3,1e4,1e5,1e6]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
@@ -503,7 +504,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     #Plotter.plot!(NDofs, 0.5*NDofs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
     #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
     
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
     Plotter.savefig(filename_plots(data))
 end
@@ -701,18 +702,21 @@ function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1
     for n = 1 : length(nrefs)
         Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
     end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"$c_M", gridalpha = 0.5, grid=true)
         
     ##
     print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+    print_table(c, L2ϱ; xlabel = "c", ylabels = "|| ϱ - ϱ_h || ".* labels)
+    
         
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "c"))
 end
 
-function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], μ = [1e-8,1e-6,1e-4,1e-2,1,1e+2] , Plotter = Plots, kwargs...)
+function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5,1e+6], μ = [1e-4,1e-3,1e-2,1e-1,1] , Plotter = Plots, kwargs...)
 
     data = load_data(; kwargs...)
+    data["nrefs"] = nrefs
     @show data
     L2u = zeros(Float64, length(c), length(μ))
     H1u = zeros(Float64, length(c), length(μ))
@@ -732,20 +736,21 @@ function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1
 
     ## plot
     labels = [" μ =  $μk" for μk in μ]
-    yticks = [1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1]
+    yticks = [1e+2,1e+1,1e+0,1e-12,1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2]
     xticks = c
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(μ)
+    #for n = 1 : length(μ)
         #Plotter.plot!(c, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{μ} = %$(μ[n])") # "||∇(u-u_h)|| μ = $(μ[n])"
-        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{μ} = %$(μ[n])") # "||ϱ - ϱ_h|| μ= $(μ[n])"
-    end
+        #Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{μ} = %$(μ[n])") # "||ϱ - ϱ_h|| μ= $(μ[n])"
+    #end
     for n = 1 : length(μ)
         Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")    
     end
-    #Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c_M", gridalpha = 0.5, grid=true)
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"c_\mathrm{Ma}", gridalpha = 0.5, grid=true)
         
     ##
     print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+    #print_table(c, L2ϱ; xlabel = "c", ylabels = "|| ϱ - ϱ_h || ".* labels)
         
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "cμ"))

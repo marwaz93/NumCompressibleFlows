@@ -167,6 +167,8 @@ function callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time
     mul!(rowsums, D.entries, one_vector)
 
     ## if not, use the smaller τ
+
+    # update to multiply by a safety factor, 
     if order == 1
         tau = min(extrema(abs.(xgrid[CellVolumes]./rowsums))[1]/2, τ)
         print(" (τ = $tau) ")
