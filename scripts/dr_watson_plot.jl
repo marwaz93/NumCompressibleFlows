@@ -74,12 +74,13 @@ function filename(data)
     ctype = replace(string(data["convectiontype"]), "Convection" => "Conv")
     cortype = replace(string(data["coriolistype"]), "Coriolis" => "Cor")
     
-    laplacian_in_rhs = data["laplacian_in_rhs"]
+    #laplacian_in_rhs = data["laplacian_in_rhs"]
+    pressure_in_f = data["pressure_in_f"]
     stab1 = data["stab1"]
     stab2 = data["stab2"]
     
     # Use shorter parameter names and only include essential ones
-    essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype laplacian_in_rhs stab1 stab2
+    essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype pressure_in_f stab1 stab2
    
    
 
@@ -119,6 +120,7 @@ function run_single(data; kwargs...)
     coriolistype = data["coriolistype"]
     stab1 = data["stab1"]
     stab2 = data["stab2"]
+    
     data = Dict{String, Any}(data)
     @show data, typeof(data)
 
@@ -308,6 +310,8 @@ function run_single(data; kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
     sol, nits = iterate_until_stationarity([SC1, SC2]; energy_integrator = EnergyIntegrator, maxsteps = maxsteps, init = sol, kwargs...)
 
+    # 
+
     ## calculate mass
     Mend = sum(evaluate(MassIntegrator, sol))
      @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
@@ -320,6 +324,8 @@ function run_single(data; kwargs...)
     data["grid"] = xgrid
     data["unknown_u"] = u
     data["unknown_ϱ"] = ϱ
+    #data["res_momentum"] = residual(SC1)
+    #data["res_continuity"] = residual(SC2)
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
@@ -343,6 +349,7 @@ mkpath(plotsdir("compressible_stokes_paper/parameter_studies_γ/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_cμ/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c1/"))
+mkpath(plotsdir("compressible_stokes_paper/parameter_studies_α/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c2/"))
 
 function filename_plots(data; prefix = "", free_parameter = "")
@@ -358,25 +365,28 @@ function filename_plots(data; prefix = "", free_parameter = "")
     velocitytype = string(data["velocitytype"])
     densitytype = string(data["densitytype"])
     reconstruct = data["reconstruct"]
+    pressure_in_f = data["pressure_in_f"]
     eostype = data["eostype"]
     gridtype = data["gridtype"]
     convectiontype = data["convectiontype"]
     nrefs = data["nrefs"]
 
     if free_parameter == "μ"
-        sname = savename((@dict c γ ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     elseif free_parameter == "γ"
-        sname = savename((@dict μ c ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     elseif free_parameter == "c"
-        sname = savename((@dict μ γ ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     elseif free_parameter == "cμ"
-        sname = savename((@dict nrefs γ ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     elseif free_parameter == "c1"
-        sname = savename((@dict μ c γ ϵ velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ nrefs velocitytype densitytype reconstruct pressure_in_f))
     elseif free_parameter == "c2"
-        sname = savename((@dict μ c γ ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+    elseif free_parameter == "α"
+        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     else
-        sname = savename((@dict μ c γ ϵ c1 velocitytype densitytype reconstruct))
+        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
     end
 
     if free_parameter !== ""
@@ -475,6 +485,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     #@show data
     Results = zeros(Float64, length(nrefs), 5)
     NDoFs = zeros(Float64, length(nrefs))
+    #Residuals = zeros(Float64, length(nrefs), 2)
 
     for lvl in nrefs
         data["nrefs"] = lvl
@@ -486,12 +497,23 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
         Results[lvl,4] = data["Error(L2,ϱu)"]
         Results[lvl,5] = data["nits"]
 
+       # if haskey(data, "res_momentum")
+        #    Residuals[lvl,1] = data["res_momentum"]
+         #   Residuals[lvl,2] = data["res_continuity"]
+        #else
+           # @warn "residual information not found, consider rerunning"
+           # Residuals[lvl,1] = 1e30
+           # Residuals[lvl,2] = 1e30
+       # end
+
+
+
         print_convergencehistory(NDoFs[1:lvl], Results[1:lvl, :]; X_to_h = X -> X .^ (-1 / 2), ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"], xlabel = "ndof")
     end
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2,1e3]
+    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2]
     xticks = [1e1,1e2,1e3,1e4,1e5,1e6]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
@@ -507,6 +529,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
     Plotter.savefig(filename_plots(data))
+    #return Residuals
 end
 
 function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
@@ -550,7 +573,7 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
     Plotter.savefig(filename_plots(data; free_parameter = "μ"))
 end
 
-function plot_parameter_study_stab1(;  nrefs = [3,4,5], c1 = [1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
+function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1], Plotter = Plots, kwargs...)
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c1), length(nrefs))
@@ -561,7 +584,9 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5], c1 = [1e-4,1e-2,1,1e+2,1
     for n = 1 : length(nrefs)
         data["nrefs"] = nrefs[n]
         for j = 1 : length(c1)
-                data["stab1"] = (0.9, c1[j])
+                stab1 = data["stab1"]
+                @show stab1[1]
+                data["stab1"] = (stab1[1], c1[j])
                 data, ~ = produce_or_load(run_single, data, filename = filename)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
@@ -588,6 +613,91 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5], c1 = [1e-4,1e-2,1,1e+2,1
         
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "c1"))
+end
+# Plotting c_s for reconstruction
+function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e3,1e5], Plotter = Plots, kwargs...)
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(c1), length(reconstruct))
+    H1u = zeros(Float64, length(c1), length(reconstruct))
+    L2ϱ = zeros(Float64, length(c1), length(reconstruct))
+   
+
+    for n = 1 : length(reconstruct)
+        data["reconstruct"] = reconstruct[n]
+        for j = 1 : length(c1)
+               stab1 = data["stab1"]
+                @show stab1[1]
+                data["stab1"] = (stab1[1], c1[j])
+                data, ~ = produce_or_load(run_single, data, filename = filename)
+                L2u[j,n] = data["Error(L2,u)"]
+                H1u[j,n] = data["Error(H1,u)"]
+                L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" Reconstruct $n" for n in reconstruct]
+    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e1,1e2]
+    xticks = c1
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(reconstruct)
+        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{Pi} = %$(reconstruct[n])") # "||∇(u-u_h)|| 
+         Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{Pi} = %$(reconstruct[n])") # "||ϱ - ϱ_h|| 
+    end
+    for n = 1 : length(reconstruct)
+        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{Pi} = %$(reconstruct[n]) ")    
+    end
+    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c1, L2u; xlabel = "c1", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c1"))
+end
+
+function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false], alpha = [0,5e-1,1,1e-0,1+5e-1,2e-0], Plotter = Plots, kwargs...)
+    data = load_data(; kwargs...)
+    @show data
+    L2u = zeros(Float64, length(alpha), length(reconstruct))
+    H1u = zeros(Float64, length(alpha), length(reconstruct))
+    L2ϱ = zeros(Float64, length(alpha), length(reconstruct))
+   
+
+    for n = 1 : length(reconstruct)
+        data["reconstruct"] = reconstruct[n]
+        for j = 1 : length(alpha)
+               stab1 = data["stab1"]
+                @show stab1[1]
+                data["stab1"] = (alpha[j]-1, stab1[2])
+                @info "α = $(alpha[j])"
+                data, ~ = produce_or_load(run_single, data, filename = filename)
+                L2u[j,n] = data["Error(L2,u)"]
+                H1u[j,n] = data["Error(H1,u)"]
+                L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" Reconstruct $n" for n in reconstruct]
+    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = alpha
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(reconstruct)
+        Plotter.plot!(alpha, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{Pi} = %$(reconstruct[n])") # "||∇(u-u_h)|| 
+         Plotter.plot!(alpha, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{Pi} = %$(reconstruct[n])") # "||ϱ - ϱ_h|| 
+    end
+    for n = 1 : length(reconstruct)
+        Plotter.plot!(alpha, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{Pi} = %$(reconstruct[n]) ")    
+    end
+    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "α", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(alpha, L2u; xlabel = "α", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "α"))
 end
 function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
     data = load_data(; kwargs...)

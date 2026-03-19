@@ -193,7 +193,7 @@ function prepare_data(
         end
         if laplacian_in_rhs 
             f =  0 * Δu 
-            g += - μ * Δu / ϱ  - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
+            g .+= - μ * Δu / ϱ  .- λ*∇divu / ϱ .+ conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
             
         else
             f = - μ * Δu  - λ*∇divu + conv  # f = L(u)
