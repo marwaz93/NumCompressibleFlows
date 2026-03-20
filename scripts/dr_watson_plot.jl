@@ -17,6 +17,29 @@ using Colors
 using ColorTypes
 #gr()
 
+# Safe loader that reads only scalar keys from JLD2 files, avoiding
+# deserialization of complex FE types that break across package versions.
+const _safe_keys = ["Error(L2,u)", "Error(H1,u)", "Error(L2,ϱ)", "Error(L2,ϱu)",
+                    "ndofs", "nits", "M_exact", "M_start", "M_end"]
+
+function safe_produce_or_load(data; force = false, kwargs...)
+    fpath = filename(data) * ".jld2"
+    if !force && isfile(fpath)
+        result = Dict{String, Any}()
+        jldopen(fpath, "r") do f
+            for k in keys(f)
+                if k in _safe_keys
+                    result[k] = f[k]
+                end
+            end
+        end
+        merge!(data, result)
+        return data, fpath
+    else
+        return produce_or_load(run_single, data, filename = filename; force = force, kwargs...)
+    end
+end
+
 default_args = Dict(
     # problem parameters
     "μ" => 1,
@@ -489,7 +512,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     for lvl in nrefs
         data["nrefs"] = lvl
-        data, ~ = produce_or_load(run_single, data, filename = filename, force = force)
+        data, ~ = safe_produce_or_load(data; force = force)
         NDoFs[lvl] = data["ndofs"]
         Results[lvl,1] = data["Error(L2,u)"]
         Results[lvl,2] = data["Error(H1,u)"] 
@@ -533,7 +556,8 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 end
 
 function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
-
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    μ = μ isa AbstractVector ? μ : [μ]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(μ), length(nrefs))
@@ -545,7 +569,7 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
         data["nrefs"] = nrefs[n]
         for j = 1 : length(μ)
             data["μ"] = μ[j]
-            data, ~ = produce_or_load(run_single, data, filename = filename)
+            data, ~ = safe_produce_or_load(data)
             L2u[j,n] = data["Error(L2,u)"]
             H1u[j,n] = data["Error(H1,u)"]
             L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -574,6 +598,8 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
 end
 
 function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1], Plotter = Plots, kwargs...)
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    c1 = c1 isa AbstractVector ? c1 : [c1]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c1), length(nrefs))
@@ -587,7 +613,7 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2
                 stab1 = data["stab1"]
                 @show stab1[1]
                 data["stab1"] = (stab1[1], c1[j])
-                data, ~ = produce_or_load(run_single, data, filename = filename)
+                data, ~ = safe_produce_or_load(data)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
                 L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -616,6 +642,8 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2
 end
 # Plotting c_s for reconstruction
 function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e3,1e5], Plotter = Plots, kwargs...)
+    reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
+    c1 = c1 isa AbstractVector ? c1 : [c1]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c1), length(reconstruct))
@@ -629,7 +657,7 @@ function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false]
                stab1 = data["stab1"]
                 @show stab1[1]
                 data["stab1"] = (stab1[1], c1[j])
-                data, ~ = produce_or_load(run_single, data, filename = filename)
+                data, ~ = safe_produce_or_load(data)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
                 L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -637,27 +665,39 @@ function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false]
     end
 
     ## plot
-    labels = [" Reconstruct $n" for n in reconstruct]
-    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e1,1e2]
-    xticks = c1
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(reconstruct)
-        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{Pi} = %$(reconstruct[n])") # "||∇(u-u_h)|| 
-         Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{Pi} = %$(reconstruct[n])") # "||ϱ - ϱ_h|| 
+    pi_names = [r ? "\\Pi = RT_0" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
+    col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
+    allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
+    allvals = filter(x -> x > 0 && isfinite(x), allvals)
+    ylo = 10.0^floor(log10(minimum(allvals)) - 0.5)
+    yhi = 10.0^ceil(log10(maximum(allvals)) + 1.0)
+    yticks = 10.0 .^ (floor(Int, log10(ylo)):ceil(Int, log10(yhi)))
+    xticks = 10.0 .^ (-5:5)
+    Plotter.plot(; show = true, size = (1200,900), margin = 1Plots.cm, legendfontsize = 14, tickfontsize = 16, guidefontsize = 20)
+    # grouped by quantity; plot red (false) first, green (true) on top so both visible
+    order = sortperm(reconstruct)  # false first, true second
+    for n in order
+        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :dashdot, marker = :circle, markersize = 5, color = col[n], label = latexstring("||\\nabla(\\mathbf{u} - \\mathbf{u}_h)||,\\; ", pi_names[n]))
     end
-    for n = 1 : length(reconstruct)
-        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{Pi} = %$(reconstruct[n]) ")    
+    for n in order
+        Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :dot, marker = :diamond, markersize = 5, color = col[n], label = latexstring("||\\varrho - \\varrho_h||,\\; ", pi_names[n]))
     end
-    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
-        
+    for n in order
+        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :solid, marker = :square, markersize = 5, color = col[n], label = latexstring("||\\mathbf{u} - \\mathbf{u}_h||,\\; ", pi_names[n]))
+    end
+    Plotter.plot!(; legend = :topleft, xtick = xticks, yticks = yticks, ylim = (ylo, yhi), xlabel = L"c_s", gridalpha = 0.5, grid = true, background_color_legend = RGBA(1,1,1,0.7))
+
     ##
-    print_table(c1, L2u; xlabel = "c1", ylabels = "|| u - u_h || ".* labels)
-        
+    labels = [" Pi=$(reconstruct[n] ? "RT0" : "Gamma")" for n in 1:length(reconstruct)]
+    print_table(c1, L2u; xlabel = "c_s", ylabels = "|| u - u_h || " .* labels)
+
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "c1"))
 end
 
 function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false], alpha = [0,5e-1,1,1e-0,1+5e-1,2e-0], Plotter = Plots, kwargs...)
+    reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
+    alpha = alpha isa AbstractVector ? alpha : [alpha]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(alpha), length(reconstruct))
@@ -672,7 +712,7 @@ function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false]
                 @show stab1[1]
                 data["stab1"] = (alpha[j]-1, stab1[2])
                 @info "α = $(alpha[j])"
-                data, ~ = produce_or_load(run_single, data, filename = filename)
+                data, ~ = safe_produce_or_load(data)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
                 L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -680,26 +720,37 @@ function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false]
     end
 
     ## plot
-    labels = [" Reconstruct $n" for n in reconstruct]
-    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = alpha
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(reconstruct)
-        Plotter.plot!(alpha, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{Pi} = %$(reconstruct[n])") # "||∇(u-u_h)|| 
-         Plotter.plot!(alpha, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{Pi} = %$(reconstruct[n])") # "||ϱ - ϱ_h|| 
+    pi_names = [r ? "\\Pi = RT_0" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
+    col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
+    allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
+    allvals = filter(x -> x > 0 && isfinite(x), allvals)
+    ylo = 10.0^floor(log10(minimum(allvals)) - 0.5)
+    yhi = 10.0^ceil(log10(maximum(allvals)) + 1.0)
+    yticks = 10.0 .^ (floor(Int, log10(ylo)):ceil(Int, log10(yhi)))
+    Plotter.plot(; show = true, size = (1200,900), margin = 1Plots.cm, legendfontsize = 14, tickfontsize = 16, guidefontsize = 20)
+    # grouped by quantity; plot red (false) first, green (true) on top so both visible
+    order = sortperm(reconstruct)  # false first, true second
+    for n in order
+        Plotter.plot!(alpha, H1u[:,n]; yscale = :log10, linewidth = 3, linestyle = :dashdot, marker = :circle, markersize = 5, color = col[n], label = latexstring("||\\nabla(\\mathbf{u} - \\mathbf{u}_h)||,\\; ", pi_names[n]))
     end
-    for n = 1 : length(reconstruct)
-        Plotter.plot!(alpha, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{Pi} = %$(reconstruct[n]) ")    
+    for n in order
+        Plotter.plot!(alpha, L2ϱ[:,n]; yscale = :log10, linewidth = 3, linestyle = :dot, marker = :diamond, markersize = 5, color = col[n], label = latexstring("||\\varrho - \\varrho_h||,\\; ", pi_names[n]))
     end
-    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "α", gridalpha = 0.5, grid=true)
-        
+    for n in order
+        Plotter.plot!(alpha, L2u[:,n]; yscale = :log10, linewidth = 3, linestyle = :solid, marker = :square, markersize = 5, color = col[n], label = latexstring("||\\mathbf{u} - \\mathbf{u}_h||,\\; ", pi_names[n]))
+    end
+    Plotter.plot!(; legend = :topright, xtick = alpha, yticks = yticks, ylim = (ylo, yhi), xlim = (-0.05, 2.05), xlabel = L"\alpha", gridalpha = 0.5, grid = true, background_color_legend = RGBA(1,1,1,0.7))
+
     ##
-    print_table(alpha, L2u; xlabel = "α", ylabels = "|| u - u_h || ".* labels)
-        
+    labels = [" Pi=$(reconstruct[n] ? "RT0" : "Gamma")" for n in 1:length(reconstruct)]
+    print_table(alpha, L2u; xlabel = "α", ylabels = "|| u - u_h || " .* labels)
+
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "α"))
 end
 function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    c2 = c2 isa AbstractVector ? c2 : [c2]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c2), length(nrefs))
@@ -711,7 +762,7 @@ function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1
         data["nrefs"] = nrefs[n]
         for j = 1 : length(c2)
                 data["stab2"] = (1.5, c2[j])
-                data, ~ = produce_or_load(run_single, data, filename = filename)
+                data, ~ = safe_produce_or_load(data)
                 L2u[j,n] = data["Error(L2,u)"]
                 H1u[j,n] = data["Error(H1,u)"]
                 L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -740,7 +791,8 @@ function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1
 end
 
 function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
-
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    γ = γ isa AbstractVector ? γ : [γ]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(γ), length(nrefs))
@@ -752,7 +804,7 @@ function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plot
         data["nrefs"] = nrefs[n]
         for j = 1 : length(γ)
             data["γ"] = γ[j]
-            data, ~ = produce_or_load(run_single, data, filename = filename)
+            data, ~ = safe_produce_or_load(data)
             L2u[j,n] = data["Error(L2,u)"]
             H1u[j,n] = data["Error(H1,u)"]
             L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -781,7 +833,8 @@ function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plot
 end
 
 function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], Plotter = Plots, kwargs...)
-
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    c = c isa AbstractVector ? c : [c]
     data = load_data(; kwargs...)
     @show data
     L2u = zeros(Float64, length(c), length(nrefs))
@@ -793,7 +846,7 @@ function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1
         data["nrefs"] = nrefs[n]
         for j = 1 : length(c)
             data["c"] = c[j]
-            data, ~ = produce_or_load(run_single, data, filename = filename)
+            data, ~ = safe_produce_or_load(data)
             L2u[j,n] = data["Error(L2,u)"]
             H1u[j,n] = data["Error(H1,u)"]
             L2ϱ[j,n] = data["Error(L2,ϱ)"]
@@ -824,7 +877,8 @@ function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1
 end
 
 function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5,1e+6], μ = [1e-4,1e-3,1e-2,1e-1,1] , Plotter = Plots, kwargs...)
-
+    c = c isa AbstractVector ? c : [c]
+    μ = μ isa AbstractVector ? μ : [μ]
     data = load_data(; kwargs...)
     data["nrefs"] = nrefs
     @show data
@@ -837,7 +891,7 @@ function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1
         data["μ"] = μ[n]
         for j = 1 : length(c)
             data["c"] = c[j]
-            data, ~ = produce_or_load(run_single, data, filename = filename)
+            data, ~ = safe_produce_or_load(data)
             L2u[j,n] = data["Error(L2,u)"]
             H1u[j,n] = data["Error(H1,u)"]
             L2ϱ[j,n] = data["Error(L2,ϱ)"]
