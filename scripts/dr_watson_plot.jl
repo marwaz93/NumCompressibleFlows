@@ -15,12 +15,16 @@ using JLD2
 using LaTeXStrings
 using Colors
 using ColorTypes
+using Latexify
+using Plots
 #gr()
 
 # Safe loader that reads only scalar keys from JLD2 files, avoiding
 # deserialization of complex FE types that break across package versions.
-const _safe_keys = ["Error(L2,u)", "Error(H1,u)", "Error(L2,ϱ)", "Error(L2,ϱu)",
-                    "ndofs", "nits", "M_exact", "M_start", "M_end"]
+_safe_keys = ["Error(L2,u)", "Error(H1,u)", "Error(L2,ϱ)", "Error(L2,ϱu)",
+              "ndofs", "nits", "M_exact", "M_start", "M_end","Error(H1,u0)"]
+              
+              # , "res_momentum", "res_continuity"]
 
 function safe_produce_or_load(data; force = false, kwargs...)
     fpath = filename(data) * ".jld2"
@@ -54,8 +58,8 @@ default_args = Dict(
     "order" => 1,
     "pressure_stab" => 0,
     "bonus_quadorder" => 4,
-    "maxsteps" => 5000,
-    "target_residual" => 1.0e-15,
+    "maxsteps" => 8000,
+    "target_residual" => 1.0e-11,
     "reconstruct" => true,
     # data of the problem
     "velocitytype" => ZeroVelocity,
@@ -300,6 +304,7 @@ function run_single(data; kwargs...)
 
     EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
     ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+    
     #NDofs = zeros(Int, nrefs)
     #Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are 
     ## prepare error calculation
@@ -347,8 +352,76 @@ function run_single(data; kwargs...)
     data["grid"] = xgrid
     data["unknown_u"] = u
     data["unknown_ϱ"] = ϱ
-    #data["res_momentum"] = residual(SC1)
-    #data["res_continuity"] = residual(SC2)
+
+
+    ## compute error of divergence-free part by solving
+    ## incompressible Stokes problem with rhs (∇(u-uh), ∇v)
+
+    ## prepare FESpace
+   
+     xgridSP = barycentric_refine(xgrid)
+    # xgridSP = xgrid 
+     FES_SP = [FESpace{H1Pk{2,2,2}}(xgridSP), FESpace{H1Pk{1,2,1}}(xgridSP; broken = true)]
+
+    # FETypes = (H1BR{2}, L2P0{1})
+    # PenaltyDivergence = Reconstruct{HDIVRT0{2}, Divergence}
+
+
+     uzero  = Unknown("u"; name = "Stokes projection")
+     pzero = Unknown("p"; name = "pressure of projection")
+     PDSP_u = ProblemDescription("Stokes projection problem - u update")
+     
+     β = 1e+3
+     assign_unknown!(PDSP_u, uzero)
+    
+
+    ## interpolate discrete velocity into SV space
+     solSP = FEVector(FES_SP; tags = [uzero, pzero])
+     append!(solSP, FES_SP[1]; tag = u)
+     lazy_interpolate!(solSP[u], sol, [id(u)]) # now solSP[u] is the interpolated discrete compressibe solution
+
+
+    # assign_operator!(PDSP, BilinearOperator(stokes_kernel, [grad(uzero), id(pzero)]; kwargs...))        
+    # assign_operator!(PDSP, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))        
+    # assign_operator!(PDSP, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = bonus_quadorder, kwargs...))
+    # assign_operator!(PDSP, InterpolateBoundaryData(uzero, u!; regions = 1:4))
+    # assign_operator!(PDSP, FixDofs(pzero; dofs = [1], vals = [0.0]))
+
+    assign_operator!(PDSP_u, BilinearOperator([grad(uzero)]; factor = 1, store = true, kwargs...))
+    assign_operator!(PDSP_u, BilinearOperator([div(uzero)]; store = true, factor = β , kwargs...))
+    assign_operator!(PDSP_u, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))    # ∇ u_h part     
+    assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = bonus_quadorder, kwargs...)) # ∇ u_part
+    assign_operator!(PDSP_u, LinearOperator([div(uzero)], [id(pzero)]; factor = 1, kwargs...))
+    assign_operator!(PDSP_u, InterpolateBoundaryData(uzero, u!; regions = 1:4, kwargs...))
+
+    PDSP_p = ProblemDescription("Stokes projection problem - p update")
+    assign_unknown!(PDSP_p, pzero)
+
+    assign_operator!(PDSP_p, BilinearOperator([id(pzero)]; store = true, kwargs...))
+    assign_operator!(PDSP_p, LinearOperator(div_projection!, [id(pzero)], [id(pzero), div(uzero)]; params = [β], factor = 1, kwargs...))
+
+
+    ## solve
+    # solSP = ExtendableFEM.solve(PDSP, FES_SP; init = solSP, maxiterations = 20, kwargs...)
+    # @info solSP
+
+
+    # residuals printing
+   # data["res_momentum"] = residual(SC1)
+   # data["res_continuity"] = residual(SC2)
+
+   
+   
+    SC1 = SolverConfiguration(PDSP_u; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
+    SC2 = SolverConfiguration(PDSP_p; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
+    solSP, nits = iterate_until_stationarity([SC1, SC2]; init = solSP, kwargs...)
+    @info "converged after $nits iterations"
+
+
+    ## compute norm of div-free projection of the error
+     error0 = evaluate(L2NormIntegrator([grad(uzero)]), solSP)
+     data["Error(H1,u0)"] = sqrt(sum(view(error0, 1, :)) + sum(view(error0, 2, :)) +  + sum(view(error0, 3, :)) +  + sum(view(error0, 4, :))) # grad u = (u_1,u_2)
+     @info data["Error(H1,u0)"]
 
     ## calculate error
     error = evaluate(ErrorIntegratorExact, sol)
@@ -361,12 +434,12 @@ function run_single(data; kwargs...)
 
     ## save to data folder
     return data
-
-
 end
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
 mkpath(plotsdir("compressible_stokes_paper/convegence_history"))
+mkpath(plotsdir("compressible_stokes_paper/panlty_convegence_history"))
+
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_μ/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_γ/"))
 mkpath(plotsdir("compressible_stokes_paper/parameter_studies_c/"))
@@ -395,62 +468,62 @@ function filename_plots(data; prefix = "", free_parameter = "")
     nrefs = data["nrefs"]
 
     if free_parameter == "μ"
-        sname = savename((@dict c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict c γ ϵ c1 nrefs reconstruct ))
     elseif free_parameter == "γ"
-        sname = savename((@dict μ c ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ c ϵ c1 nrefs reconstruct ))
     elseif free_parameter == "c"
-        sname = savename((@dict μ γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ γ ϵ c1 nrefs reconstruct ))
     elseif free_parameter == "cμ"
-        sname = savename((@dict γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict γ ϵ c1 nrefs reconstruct ))
     elseif free_parameter == "c1"
-        sname = savename((@dict μ c γ ϵ nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ c γ ϵ nrefs reconstruct ))
     elseif free_parameter == "c2"
-        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ c γ ϵ c1 nrefs reconstruct ))
     elseif free_parameter == "α"
-        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ c γ ϵ c1 nrefs reconstruct ))
     else
-        sname = savename((@dict μ c γ ϵ c1 nrefs velocitytype densitytype reconstruct pressure_in_f))
+        sname = savename((@dict μ c γ ϵ c1 nrefs reconstruct pressure_in_f))
     end
 
     if free_parameter !== ""
         sname = "plots/compressible_stokes_paper/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
   else
-        sname = "plots/compressible_stokes_paper/convegence_history/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes_paper/panlty_convegence_history/" * sname * prefix * ".png"
         
     end
     
     return sname
 end
 
-default_args = Dict(
-    # problem parameters
-    "μ" => 1,
-    "λ" => 0,
-    "γ" => 1,
-    "c" => 1,
-    "M" => 1,
-    # solving options
-    "τfac" => 1,
-    "ufac" => 1,
-    "nrefs" => 4,
-    "order" => 1,
-    "pressure_stab" => 0,
-    "bonus_quadorder" => 4,
-    "maxsteps" => 2000,
-    "target_residual" => 1.0e-11,
-    "reconstruct" => true,
-    # data of the problem
-    "velocitytype" => ZeroVelocity,
-    "densitytype" => ExponentialDensity,
-    "convectiontype" => NoConvection,
-    "coriolistype" => NoCoriolis,
-    "eostype" => IdealGasLaw,
-    "gridtype" => Mountain2D,
-    "pressure_in_f" => false,
-    "laplacian_in_rhs" => true,
-    "stab1" => (1-0.1,0),
-    "stab2" => (1.5,0),
-)
+# default_args = Dict(
+#     # problem parameters
+#     "μ" => 1,
+#     "λ" => 0,
+#     "γ" => 1,
+#     "c" => 1,
+#     "M" => 1,
+#     # solving options
+#     "τfac" => 1,
+#     "ufac" => 1,
+#     "nrefs" => 4,
+#     "order" => 1,
+#     "pressure_stab" => 0,
+#     "bonus_quadorder" => 4,
+#     "maxsteps" => 2000,
+#     "target_residual" => 1.0e-11,
+#     "reconstruct" => true,
+#     # data of the problem
+#     "velocitytype" => ZeroVelocity,
+#     "densitytype" => ExponentialDensity,
+#     "convectiontype" => NoConvection,
+#     "coriolistype" => NoCoriolis,
+#     "eostype" => IdealGasLaw,
+#     "gridtype" => Mountain2D,
+#     "pressure_in_f" => false,
+#     "laplacian_in_rhs" => true,
+#     "stab1" => (1-0.1,0),
+#     "stab2" => (1.5,0),
+# )
 
 
 function load_data(; kwargs...)
@@ -506,8 +579,8 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     data = load_data(; kwargs...)
     #@show data
-    Results = zeros(Float64, length(nrefs), 5)
-    NDoFs = zeros(Float64, length(nrefs))
+    Results = zeros(Float64, length(nrefs), 7)
+    NDoFs = zeros(Int, length(nrefs))
     #Residuals = zeros(Float64, length(nrefs), 2)
 
     for lvl in nrefs
@@ -518,33 +591,46 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
         Results[lvl,2] = data["Error(H1,u)"] 
         Results[lvl,3] = data["Error(L2,ϱ)"]
         Results[lvl,4] = data["Error(L2,ϱu)"]
-        Results[lvl,5] = data["nits"]
+        Results[lvl,5] = haskey(data, "Error(H1,u0)") ? data["Error(H1,u0)"] : NaN
+        Results[lvl,6] = haskey(data, "Error(H1,u0)") ? sqrt(data["Error(H1,u)"]^2 - data["Error(H1,u0)"]^2) : NaN
+        Results[lvl,7] = data["nits"]
+       
 
-       # if haskey(data, "res_momentum")
-        #    Residuals[lvl,1] = data["res_momentum"]
-         #   Residuals[lvl,2] = data["res_continuity"]
-        #else
-           # @warn "residual information not found, consider rerunning"
-           # Residuals[lvl,1] = 1e30
-           # Residuals[lvl,2] = 1e30
-       # end
+        #=
+        if haskey(data, "res_momentum")
+            Residuals[lvl,1] = data["res_momentum"]
+           Residuals[lvl,2] = data["res_continuity"]
+        else
+            @warn "residual information not found, consider rerunning"
+            Residuals[lvl,1] = 1e30
+            Residuals[lvl,2] = 1e30
+        end
 
-
-
-        print_convergencehistory(NDoFs[1:lvl], Results[1:lvl, :]; X_to_h = X -> X .^ (-1 / 2), ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"], xlabel = "ndof")
+=#
+    
+        #print_convergencehistory(NDoFs[1:lvl], Results[1:lvl, :]; X_to_h = X -> X .^ (-1 / 2), ylabels = ["|| u - u_h ||", "|| ∇(u - u_h) ||", "|| ϱ - ϱ_h ||", "|| ϱu - ϱu_h ||", "#its"], xlabel = "ndof")
+         print_convergencehistory(NDoFs[:], Results[:,[1,2,5,3]]; X_to_h = X -> 
+            X.^(-1/2), ylabels = [L"\lt{\bu - \uh}" , L"\lt{\nabla \(\bu - \uh\)}", L"\lt{\nabla \(\bu^0 - \uh^0\)}",
+            L"\lt{\varrho - \varrho_h}"], xlabel = "ndof", latex_mode = true)
     end
+    # L"\lt{\nabla \(\varrho \bu - \varrho_h \uh\)}",
+    
+    #print(latexify(Results[:,[6,1,2,3]]; env = :table, booktabs = false, latex = false, fmt = "%.2e"))
 
     ## plot
     #Plotter.rc("font", size=20)
     yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2]
-    xticks = [1e1,1e2,1e3,1e4,1e5,1e6]
+    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
     Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
+    Plotter.plot!(NDoFs, Results[:,5]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||", grid=true)
+    Plotter.plot!(NDoFs, Results[:,7]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"nits", grid=true)
     Plotter.plot!(NDoFs, 0.5*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
     Plotter.plot!(NDoFs, (1e+1)*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+
     #Plotter.plot!(NDofs, 0.5*NDofs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
     #Plotter.plot!(NDofs, 0.5*NDofs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
     #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
@@ -552,7 +638,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
     Plotter.savefig(filename_plots(data))
-    #return Residuals
+  #  return Residuals
 end
 
 function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
@@ -641,7 +727,7 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2
     Plotter.savefig(filename_plots(data; free_parameter = "c1"))
 end
 # Plotting c_s for reconstruction
-function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e3,1e5], Plotter = Plots, kwargs...)
+function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2,1e3,1e4,1e5], Plotter = Plots, kwargs...)
     reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
     c1 = c1 isa AbstractVector ? c1 : [c1]
     data = load_data(; kwargs...)
@@ -665,7 +751,7 @@ function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false]
     end
 
     ## plot
-    pi_names = [r ? "\\Pi = RT_0" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
+    pi_names = [r ? "\\Pi = I_h^{\\mathrm{RT_0}}" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
     col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
     allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
     allvals = filter(x -> x > 0 && isfinite(x), allvals)
@@ -720,7 +806,7 @@ function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false]
     end
 
     ## plot
-    pi_names = [r ? "\\Pi = RT_0" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
+    pi_names = [r ? "\\Pi = I_h^{\\mathrm{RT_0}}" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
     col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
     allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
     allvals = filter(x -> x > 0 && isfinite(x), allvals)

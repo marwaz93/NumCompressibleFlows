@@ -162,3 +162,20 @@ function eos!(::Type{<:PowerLaw{γ}}; kawrgs...) where {γ}
     end
     return eos_powerlaw!
 end
+
+function stokes_kernel(result, u_ops, qpinfo)
+    ∇u, p = view(u_ops,1:4), view(u_ops, 5)
+    result[1] = ∇u[1] - p[1]
+    result[2] = ∇u[2]  
+    result[3] = ∇u[3]
+    result[4] = ∇u[4] - p[1]
+    result[5] = -(∇u[1] + ∇u[4])
+    # result is then multiplied with [grad(v),id(q)]
+    return nothing
+end
+
+# kernel for div projection
+function div_projection!(result, input, qpinfo)
+    result[1] = input[1] - qpinfo.params[1] * input[2]
+    return nothing
+end
