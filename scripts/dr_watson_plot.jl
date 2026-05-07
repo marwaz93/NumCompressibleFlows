@@ -374,11 +374,17 @@ function run_single(data; kwargs...)
      β = 1e+3
      assign_unknown!(PDSP_u, uzero)
     
+    ## for pre-compilation of lazy_interpolate use a coarse grid
+    compile_grid = simplexgrid(0:0.5:1,0:0.5:1)
+    cg_refined = barycentric_refine(compile_grid)
+    test_fe1 = FEVector(FESpace{FETypes[1]}(compile_grid); tags = [u])
+    test_fe2 = FEVector(FESpace{H1Pk{2,2,2}}(cg_refined); tags = [u])
+    @time lazy_interpolate!(test_fe2[1], test_fe1, [id(u)]; quadorder = 0)
 
-    ## interpolate discrete velocity into SV space
-     solSP = FEVector(FES_SP; tags = [uzero, pzero])
-     append!(solSP, FES_SP[1]; tag = u)
-     lazy_interpolate!(solSP[u], sol, [id(u)]) # now solSP[u] is the interpolated discrete compressibe solution
+    ## interpolate discrete compressible velocity solution into SV space
+    solSP = FEVector(FES_SP; tags = [uzero, pzero])
+    append!(solSP, FES_SP[1]; tag = u)
+    @time lazy_interpolate!(solSP[u], sol, [id(u)]; quadorder = 0) # now solSP[u] is the interpolated discrete compressibe solution
 
 
     # assign_operator!(PDSP, BilinearOperator(stokes_kernel, [grad(uzero), id(pzero)]; kwargs...))        
@@ -392,7 +398,7 @@ function run_single(data; kwargs...)
     assign_operator!(PDSP_u, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))    # ∇ u_h part     
     assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = bonus_quadorder, kwargs...)) # ∇ u_part
     assign_operator!(PDSP_u, LinearOperator([div(uzero)], [id(pzero)]; factor = 1, kwargs...))
-    assign_operator!(PDSP_u, InterpolateBoundaryData(uzero, u!; regions = 1:4, kwargs...))
+    assign_operator!(PDSP_u, HomogeneousBoundaryData(uzero; regions = 1:4, kwargs...))
 
     PDSP_p = ProblemDescription("Stokes projection problem - p update")
     assign_unknown!(PDSP_p, pzero)
