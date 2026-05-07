@@ -126,9 +126,9 @@ function run_single(data; kwargs...)
     γ = data["γ"]
     c = data["c"]
     M = data["M"]
+    ufac = data["ufac"]
     # solving options
     τfac = data["τfac"]
-    ufac = data["ufac"]
     nrefs = data["nrefs"]
     order = data["order"]
     reconstruct = data["reconstruct"]
@@ -303,13 +303,11 @@ function run_single(data; kwargs...)
     assign_operator!(PDT, CallbackOperator(callback!, [u]; linearized_dependencies = [ϱ,ϱ], modifies_rhs = false, kwargs..., name = "upwind matrix D scaled by tau"))
 
     EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
-    ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
     
     #NDofs = zeros(Int, nrefs)
     #Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are 
     ## prepare error calculation
     EnergyIntegrator = ItemIntegrator(energy_kernel!, [id(u)]; resultdim = 1, quadorder = 2 * (order + 1), kwargs...)
-    ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
     MassIntegrator = ItemIntegrator([id(ϱ)]; resultdim = 1, kwargs...)
     NDofs = zeros(Int, nrefs)
     Results = zeros(Float64, nrefs, 5) # it is a matrix whose rows are levels and columns are various errors 
@@ -338,11 +336,9 @@ function run_single(data; kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1, target_residual = target_residual, kwargs...)
     sol, nits = iterate_until_stationarity([SC1, SC2]; energy_integrator = EnergyIntegrator, maxsteps = maxsteps, init = sol, kwargs...)
 
-    # 
-
     ## calculate mass
     Mend = sum(evaluate(MassIntegrator, sol))
-     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
+    @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     # Untill here :D 
 
@@ -353,94 +349,116 @@ function run_single(data; kwargs...)
     data["unknown_u"] = u
     data["unknown_ϱ"] = ϱ
 
-
-    ## compute error of divergence-free part by solving
-    ## incompressible Stokes problem with rhs (∇(u-uh), ∇v)
-
-    ## prepare FESpace
-   
-     xgridSP = barycentric_refine(xgrid)
-    # xgridSP = xgrid 
-     FES_SP = [FESpace{H1Pk{2,2,2}}(xgridSP), FESpace{H1Pk{1,2,1}}(xgridSP; broken = true)]
-
-    # FETypes = (H1BR{2}, L2P0{1})
-    # PenaltyDivergence = Reconstruct{HDIVRT0{2}, Divergence}
-
-
-     uzero  = Unknown("u"; name = "Stokes projection")
-     pzero = Unknown("p"; name = "pressure of projection")
-     PDSP_u = ProblemDescription("Stokes projection problem - u update")
-     
-     β = 1e+3
-     assign_unknown!(PDSP_u, uzero)
-    
-    ## for pre-compilation of lazy_interpolate use a coarse grid
-    compile_grid = simplexgrid(0:0.5:1,0:0.5:1)
-    cg_refined = barycentric_refine(compile_grid)
-    test_fe1 = FEVector(FESpace{FETypes[1]}(compile_grid); tags = [u])
-    test_fe2 = FEVector(FESpace{H1Pk{2,2,2}}(cg_refined); tags = [u])
-    @time lazy_interpolate!(test_fe2[1], test_fe1, [id(u)]; quadorder = 0)
-
-    ## interpolate discrete compressible velocity solution into SV space
-    solSP = FEVector(FES_SP; tags = [uzero, pzero])
-    append!(solSP, FES_SP[1]; tag = u)
-    @time lazy_interpolate!(solSP[u], sol, [id(u)]; quadorder = 0) # now solSP[u] is the interpolated discrete compressibe solution
-
-
-    # assign_operator!(PDSP, BilinearOperator(stokes_kernel, [grad(uzero), id(pzero)]; kwargs...))        
-    # assign_operator!(PDSP, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))        
-    # assign_operator!(PDSP, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = bonus_quadorder, kwargs...))
-    # assign_operator!(PDSP, InterpolateBoundaryData(uzero, u!; regions = 1:4))
-    # assign_operator!(PDSP, FixDofs(pzero; dofs = [1], vals = [0.0]))
-
-    assign_operator!(PDSP_u, BilinearOperator([grad(uzero)]; factor = 1, store = true, kwargs...))
-    assign_operator!(PDSP_u, BilinearOperator([div(uzero)]; store = true, factor = β , kwargs...))
-    assign_operator!(PDSP_u, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))    # ∇ u_h part     
-    assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = bonus_quadorder, kwargs...)) # ∇ u_part
-    assign_operator!(PDSP_u, LinearOperator([div(uzero)], [id(pzero)]; factor = 1, kwargs...))
-    assign_operator!(PDSP_u, HomogeneousBoundaryData(uzero; regions = 1:4, kwargs...))
-
-    PDSP_p = ProblemDescription("Stokes projection problem - p update")
-    assign_unknown!(PDSP_p, pzero)
-
-    assign_operator!(PDSP_p, BilinearOperator([id(pzero)]; store = true, kwargs...))
-    assign_operator!(PDSP_p, LinearOperator(div_projection!, [id(pzero)], [id(pzero), div(uzero)]; params = [β], factor = 1, kwargs...))
-
-
-    ## solve
-    # solSP = ExtendableFEM.solve(PDSP, FES_SP; init = solSP, maxiterations = 20, kwargs...)
-    # @info solSP
-
-
-    # residuals printing
-   # data["res_momentum"] = residual(SC1)
-   # data["res_continuity"] = residual(SC2)
-
-   
-   
-    SC1 = SolverConfiguration(PDSP_u; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
-    SC2 = SolverConfiguration(PDSP_p; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
-    solSP, nits = iterate_until_stationarity([SC1, SC2]; init = solSP, kwargs...)
-    @info "converged after $nits iterations"
-
-
-    ## compute norm of div-free projection of the error
-     error0 = evaluate(L2NormIntegrator([grad(uzero)]), solSP)
-     data["Error(H1,u0)"] = sqrt(sum(view(error0, 1, :)) + sum(view(error0, 2, :)) +  + sum(view(error0, 3, :)) +  + sum(view(error0, 4, :))) # grad u = (u_1,u_2)
-     @info data["Error(H1,u0)"]
-
-    ## calculate error
-    error = evaluate(ErrorIntegratorExact, sol)
-    data["Error(L2,u)"] = sqrt(sum(view(error, 1, :)) + sum(view(error, 2, :))) # u = (u_1,u_2)
-    data["Error(H1,u)"] = sqrt(sum(view(error, 3, :)) + sum(view(error, 4, :)) + sum(view(error, 5, :)) + sum(view(error, 6, :))) # ∇u = (∂_x u_1,∂_y u_1, ∂_x u_2, ∂_y u_2 )
-    data["Error(L2,ϱ)"] = sqrt(sum(view(error, 7, :))) # ϱ
-    data["Error(L2,ϱu)"]  = sqrt(sum(view(error, 8, :)) + sum(view(error, 9, :))) # (ρ u_1 - ρ u_2)
-    data["nits"] = nits
-
-
     ## save to data folder
     return data
 end
+
+
+function compute_errors(data; force_recompute = false, kwargs...)
+    # problem parameters
+    μ = data["μ"]
+    λ = data["λ"]
+    γ = data["γ"]
+    c = data["c"]
+    M = data["M"]
+    ufac = data["ufac"]
+    if haskey(data, "solution")
+        sol = data["solution"]
+        u = sol.tags[1]
+        ϱ = sol.tags[2]
+    else
+        @error "solution not found in data, cannot compute errors"
+        return nothing  
+    end
+
+    # data of the problem
+    velocitytype = data["velocitytype"]
+    densitytype = data["densitytype"]
+    eostype = data["eostype"]
+    gridtype = data["gridtype"]
+    pressure_in_f = data["pressure_in_f"]
+    laplacian_in_rhs = data["laplacian_in_rhs"]
+    convectiontype = data["convectiontype"]
+    coriolistype = data["coriolistype"]
+
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! = prepare_data( velocitytype, densitytype , eostype  ; laplacian_in_rhs = laplacian_in_rhs, pressure_in_f = pressure_in_f, M = M, c = c, μ = μ, λ = λ,γ=γ, ufac = ufac, kwargs...)
+    
+    if force_recompute || !haskey(data, "Error(H1,u0)")
+        @info "computing divergence-free part of u - u_h"
+
+        ## compute error of divergence-free part by solving
+        ## incompressible Stokes problem with rhs (∇(u-uh), ∇v)
+        
+        ## for pre-compilation of lazy_interpolate use a coarse grid
+        compile_grid = simplexgrid(0:0.5:1,0:0.5:1)
+        cg_refined = barycentric_refine(compile_grid)
+        test_fe1 = FEVector(FESpace{eltype(sol[u].FES)}(compile_grid); tags = [u])
+        test_fe2 = FEVector(FESpace{H1Pk{2,2,2}}(cg_refined); tags = [u])
+        @time lazy_interpolate!(test_fe2[1], test_fe1, [id(u)]; quadorder = 0)
+
+        ## prepare FESpace
+        xgrid = sol[u].FES.xgrid
+        xgridSP = barycentric_refine(xgrid)
+        FES_SP = [FESpace{H1Pk{2,2,2}}(xgridSP), FESpace{H1Pk{1,2,1}}(xgridSP; broken = true)]
+
+        ## unknowns of divergence-free projection
+        uzero  = Unknown("u"; name = "Stokes projection")
+        pzero = Unknown("p"; name = "pressure of projection")
+
+        ## interpolate discrete compressible velocity solution into SV space
+        solSP = FEVector(FES_SP; tags = [uzero, pzero])
+        append!(solSP, FES_SP[1]; tag = u)
+        @time lazy_interpolate!(solSP[u], sol, [id(u)]; quadorder = 0) # now solSP[u] is the interpolated discrete compressibe solution
+
+        ## problem description for velocity update of iterated penalty method of div-free projection
+        PDSP_u = ProblemDescription("Stokes projection problem - u update")
+        assign_unknown!(PDSP_u, uzero)
+        β = 1e+3 # div-penalty of iterated penalty method
+        assign_operator!(PDSP_u, BilinearOperator([grad(uzero)]; factor = 1, store = true, kwargs...))
+        assign_operator!(PDSP_u, BilinearOperator([div(uzero)]; store = true, factor = β , kwargs...))
+        assign_operator!(PDSP_u, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))    # ∇ u_h part     
+        assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; kwargs...)) # ∇ u_part
+        assign_operator!(PDSP_u, LinearOperator([div(uzero)], [id(pzero)]; factor = 1, kwargs...))
+        assign_operator!(PDSP_u, HomogeneousBoundaryData(uzero; regions = 1:4, kwargs...))
+
+        ## problem description for pressure update of iterated penalty method of div-free projection
+        PDSP_p = ProblemDescription("Stokes projection problem - p update")
+        assign_unknown!(PDSP_p, pzero)
+        assign_operator!(PDSP_p, BilinearOperator([id(pzero)]; store = true, kwargs...))
+        assign_operator!(PDSP_p, LinearOperator(div_projection!, [id(pzero)], [id(pzero), div(uzero)]; params = [β], factor = 1, kwargs...))
+
+        ## run iterated penalty method
+        SC1 = SolverConfiguration(PDSP_u; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
+        SC2 = SolverConfiguration(PDSP_p; init = solSP, maxiterations = 1, target_residual = 1.0e-10, constant_matrix = true, kwargs...)
+        solSP, nits = iterate_until_stationarity([SC1, SC2]; init = solSP, kwargs...)
+        @info "converged after $nits iterations"
+
+        ## compute norm of div-free projection of the error
+        error0 = evaluate(L2NormIntegrator([grad(uzero)]), solSP)
+        data["Error(H1,u0)"] = sqrt(sum(view(error0, 1, :)) + sum(view(error0, 2, :)) +  + sum(view(error0, 3, :)) +  + sum(view(error0, 4, :))) # grad u = (u_1,u_2)
+        @info data["Error(H1,u0)"]
+    else
+        @info "skipping computation of divergence-free part of u - u_h since already computed"
+    end
+
+    if force_recompute || !haskey(data, "Error(L2,u)")
+        @info "computing errors of u, ϱ and ϱu"
+        ## calculate error
+        order = data["order"]
+        ErrorIntegratorExact = ItemIntegrator(exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)]; resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+        error = evaluate(ErrorIntegratorExact, sol)
+        data["Error(L2,u)"] = sqrt(sum(view(error, 1, :)) + sum(view(error, 2, :))) # u = (u_1,u_2)
+        data["Error(H1,u)"] = sqrt(sum(view(error, 3, :)) + sum(view(error, 4, :)) + sum(view(error, 5, :)) + sum(view(error, 6, :))) # ∇u = (∂_x u_1,∂_y u_1, ∂_x u_2, ∂_y u_2 )
+        data["Error(L2,ϱ)"] = sqrt(sum(view(error, 7, :))) # ϱ
+        data["Error(L2,ϱu)"]  = sqrt(sum(view(error, 8, :)) + sum(view(error, 9, :))) # (ρ u_1 - ρ u_2)
+        data["nits"] = nits
+    else
+        @info "skipping error calculation since already computed"
+    end
+
+    return nothing
+end
+
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
 mkpath(plotsdir("compressible_stokes_paper/convegence_history"))
@@ -573,15 +591,14 @@ function plot_single(; Plotter = PyPlot, force = false, kwargs...)
     
     #Plotter.savefig(filename_plots(data; prefix = "_Solutions"))
 
-       scene = GridVisualize.reveal(pl)
-       return GridVisualize.save(filename_plots(data; prefix = "_Solutions"), scene; Plotter = Plotter)
+    scene = GridVisualize.reveal(pl)
+    GridVisualize.save(filename_plots(data; prefix = "_Solutions"), scene; Plotter = Plotter)
 
-
-
+    return data
 end
 
 
-function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, kwargs...)
+function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, force_recompute = false, kwargs...)
 
     data = load_data(; kwargs...)
     #@show data
@@ -593,6 +610,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
         data["nrefs"] = lvl
         data, ~ = safe_produce_or_load(data; force = force)
         NDoFs[lvl] = data["ndofs"]
+        compute_errors(data; force_recompute = force_recompute)
         Results[lvl,1] = data["Error(L2,u)"]
         Results[lvl,2] = data["Error(H1,u)"] 
         Results[lvl,3] = data["Error(L2,ϱ)"]
