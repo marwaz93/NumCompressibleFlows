@@ -27,21 +27,21 @@ _safe_keys = ["Error(L2,u)", "Error(H1,u)", "Error(L2,ϱ)", "Error(L2,ϱu)",
               # , "res_momentum", "res_continuity"]
 
 function safe_produce_or_load(data; force = false, kwargs...)
-    fpath = filename(data) * ".jld2"
-    if !force && isfile(fpath)
-        result = Dict{String, Any}()
-        jldopen(fpath, "r") do f
-            for k in keys(f)
-                if k in _safe_keys
-                    result[k] = f[k]
-                end
-            end
-        end
-        merge!(data, result)
-        return data, fpath
-    else
+    #fpath = filename(data) * ".jld2"
+    #if !force && isfile(fpath)
+    #    result = Dict{String, Any}()
+    #    jldopen(fpath, "r") do f
+    #        for k in keys(f)
+    #           if k in _safe_keys
+   #                 result[k] = f[k]
+    #            end
+    #        end
+    #    end
+    #    merge!(data, result)
+    #    return data, fpath
+    #else
         return produce_or_load(run_single, data, filename = filename; force = force, kwargs...)
-    end
+    #end
 end
 
 default_args = Dict(
@@ -354,7 +354,15 @@ function run_single(data; kwargs...)
 end
 
 
-function compute_errors(data; force_recompute = false, kwargs...)
+function compute_errors(config; force_recompute = false, kwargs...)
+
+
+    fpath = filename(config) * ".jld2"
+    @info "loading data from $fpath"
+    #@save fpath data
+    data = wload(fpath)
+
+
     # problem parameters
     μ = data["μ"]
     λ = data["λ"]
@@ -366,6 +374,7 @@ function compute_errors(data; force_recompute = false, kwargs...)
         sol = data["solution"]
         u = sol.tags[1]
         ϱ = sol.tags[2]
+        repair_grid!(sol[u].FES.xgrid)
     else
         @error "solution not found in data, cannot compute errors"
         return nothing  
@@ -456,7 +465,13 @@ function compute_errors(data; force_recompute = false, kwargs...)
         @info "skipping error calculation since already computed"
     end
 
-    return nothing
+    ## save
+    fpath = filename(data) * ".jld2"
+    @info "saving data to $fpath"
+    #@save fpath data
+    wsave(fpath, data)
+
+    return data
 end
 
 
@@ -607,23 +622,24 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     #Residuals = zeros(Float64, length(nrefs), 2)
 
     for lvl in nrefs
-        data["nrefs"] = lvl
-        data, ~ = safe_produce_or_load(data; force = force)
-        NDoFs[lvl] = data["ndofs"]
-        compute_errors(data; force_recompute = force_recompute)
-        Results[lvl,1] = data["Error(L2,u)"]
-        Results[lvl,2] = data["Error(H1,u)"] 
-        Results[lvl,3] = data["Error(L2,ϱ)"]
-        Results[lvl,4] = data["Error(L2,ϱu)"]
-        Results[lvl,5] = haskey(data, "Error(H1,u0)") ? data["Error(H1,u0)"] : NaN
-        Results[lvl,6] = haskey(data, "Error(H1,u0)") ? sqrt(data["Error(H1,u)"]^2 - data["Error(H1,u0)"]^2) : NaN
-        Results[lvl,7] = data["nits"]
+        _data = deepcopy(data)
+        _data["nrefs"] = lvl
+        _data, ~ = safe_produce_or_load(_data; force = force)
+        NDoFs[lvl] = _data["ndofs"]
+        _data = compute_errors(_data; force_recompute = force_recompute)
+        Results[lvl,1] = _data["Error(L2,u)"]
+        Results[lvl,2] = _data["Error(H1,u)"] 
+        Results[lvl,3] = _data["Error(L2,ϱ)"]
+        Results[lvl,4] = _data["Error(L2,ϱu)"]
+        Results[lvl,5] = haskey(_data, "Error(H1,u0)") ? _data["Error(H1,u0)"] : NaN
+        Results[lvl,6] = haskey(_data, "Error(H1,u0)") ? sqrt(_data["Error(H1,u)"]^2 - _data["Error(H1,u0)"]^2) : NaN
+        Results[lvl,7] = _data["nits"]
        
 
         #=
-        if haskey(data, "res_momentum")
-            Residuals[lvl,1] = data["res_momentum"]
-           Residuals[lvl,2] = data["res_continuity"]
+        if haskey(_data, "res_momentum")
+            Residuals[lvl,1] = _data["res_momentum"]
+           Residuals[lvl,2] = _data["res_continuity"]
         else
             @warn "residual information not found, consider rerunning"
             Residuals[lvl,1] = 1e30
