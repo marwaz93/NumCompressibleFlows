@@ -5,7 +5,7 @@ using ExtendableGrids
 using Triangulate
 using SimplexGridFactory
 using GridVisualize
-using Symbolics
+using Symbolics: Symbolics, @variables, build_function
 using LinearAlgebra
 #using Test #hide
 

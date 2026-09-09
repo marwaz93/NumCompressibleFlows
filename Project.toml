@@ -1,7 +1,7 @@
 name = "NumCompressibleFlows"
 uuid = "21fb45a5-abb4-49e7-b369-006a31dfd227"
-authors = ["Marwa Zainelabdeen <marwa@wias-berlin.de>, Christian Merdon <merdon@wias-berlin.de>"]
 version = "0.1.0"
+authors = ["Marwa Zainelabdeen <marwa@wias-berlin.de>, Christian Merdon <merdon@wias-berlin.de>"]
 
 [deps]
 ColorTypes = "3da002f7-5984-5a60-b8a6-cbb66c0b333f"
@@ -28,11 +28,11 @@ ExtendableFEM = "1.1.1"
 ExtendableFEMBase = "1.1.0"
 ExtendableGrids = "1.13.1"
 GridVisualize = "1.12.0"
-JLD2 = "0.5.11"
+JLD2 = "0.6.6"
 LaTeXStrings = "1.4.0"
 LinearAlgebra = "1.11.0"
 Plots = "1.40.9"
 SimplexGridFactory = "2.4.0"
 Symbolics = "7"
-Triangulate = "2.4.0"
+Triangulate = "3.0.1"
 Unitful = "1.22.1"
