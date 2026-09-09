@@ -92,17 +92,10 @@ function filename(data)
 end
 
 """
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, order, kwargs...)
+    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, kwargs...)
 
 Dispatch on convectiontype to add the appropriate convection operator.
 """
-function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, order, kwargs...)
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, NoConvection,
-                     order, kwargs...)
-end
-
-_add_convection!(PD::Nothing, args::Vararg{Any}) = nothing
-
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{<:StandardConvection}, order, kwargs...)
     assign_operator!(PD, LinearOperator(
@@ -214,7 +207,7 @@ function run_single(data; kwargs...)
     end
 
     ## add convection term (dispatched by convectiontype)
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, order, kwargs...)
+    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, kwargs...)
 
     ## boundary data and source terms
     assign_operator!(PD, LinearOperator(
@@ -331,8 +324,6 @@ function run_single(data; kwargs...)
     ## finite element spaces and solution vector
     FES  = [FESpace{FETypes[j]}(xgrid) for j in 1:3]
     sol  = FEVector(FES; tags = [u, ϱ, p])
-
-    @info PD.unknowns
 
     ## initial guess
     fill!(sol[ϱ], M)
@@ -527,23 +518,24 @@ function filename_plots(data; prefix = "", free_parameter = "")
     c2 = stab2[2]
     nrefs = data["nrefs"]
     reconstruct = data["reconstruct"]
+    convectiontype = string(data["convectiontype"])
     pressure_in_f = data["pressure_in_f"]
 
     # Select which params go into savename depending on free_parameter
     essential_params = if free_parameter == "μ"
-        @dict c γ ϵ c1 nrefs reconstruct
+        @dict c γ ϵ c1 nrefs reconstruct convectiontype
     elseif free_parameter == "γ"
-        @dict μ c ϵ c1 nrefs reconstruct
+        @dict μ c ϵ c1 nrefs reconstruct convectiontype
     elseif free_parameter == "c"
-        @dict μ γ ϵ c1 nrefs reconstruct
+        @dict μ γ ϵ c1 nrefs reconstruct convectiontype
     elseif free_parameter == "cμ"
-        @dict γ ϵ c1 nrefs reconstruct
+        @dict γ ϵ c1 nrefs reconstruct convectiontype
     elseif free_parameter == "c1"
-        @dict μ c γ ϵ nrefs reconstruct
+        @dict μ c γ ϵ nrefs reconstruct convectiontype
     elseif free_parameter in ("c2", "α")
-        @dict μ c γ ϵ c1 nrefs reconstruct
+        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype
     else
-        @dict μ c γ ϵ c1 nrefs reconstruct pressure_in_f
+        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype pressure_in_f
     end
     sname = savename(essential_params;
                      allowedtypes = (Real, String, SubString, Symbol,
@@ -552,7 +544,7 @@ function filename_plots(data; prefix = "", free_parameter = "")
     if free_parameter !== ""
         sname = "plots/compressible_stokes_paper/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
     else
-        sname = "plots/compressible_stokes_paper/penalty_convergence_history/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes_paper/convergence_history/" * sname * prefix * ".png"
     end
 
     return sname
