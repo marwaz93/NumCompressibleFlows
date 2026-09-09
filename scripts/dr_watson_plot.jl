@@ -686,19 +686,19 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     NDoFs = zeros(Int, length(nrefs))
     #Residuals = zeros(Float64, length(nrefs), 2)
 
-    for lvl in nrefs
+    for (j, lvl) in enumerate(nrefs)
         _data = deepcopy(data)
         _data["nrefs"] = lvl
         _data, ~ = safe_produce_or_load(_data; force = force)
-        NDoFs[lvl] = _data["ndofs"]
+        NDoFs[j] = _data["ndofs"]
         _data = compute_errors(_data; force_recompute = force_recompute)
-        Results[lvl,1] = _data["Error(L2,u)"]
-        Results[lvl,2] = _data["Error(H1,u)"] 
-        Results[lvl,3] = _data["Error(L2,ϱ)"]
-        Results[lvl,4] = _data["Error(L2,ϱu)"]
-        Results[lvl,5] = haskey(_data, "Error(H1,u0)") ? _data["Error(H1,u0)"] : NaN
-        Results[lvl,6] = haskey(_data, "Error(H1,u0)") ? sqrt(_data["Error(H1,u)"]^2 - _data["Error(H1,u0)"]^2) : NaN
-        Results[lvl,7] = _data["nits"]
+        Results[j,1] = _data["Error(L2,u)"]
+        Results[j,2] = _data["Error(H1,u)"] 
+        Results[j,3] = _data["Error(L2,ϱ)"]
+        Results[j,4] = _data["Error(L2,ϱu)"]
+        Results[j,5] = haskey(_data, "Error(H1,u0)") ? _data["Error(H1,u0)"] : NaN
+        Results[j,6] = haskey(_data, "Error(H1,u0)") ? sqrt(_data["Error(H1,u)"]^2 - _data["Error(H1,u0)"]^2) : NaN
+        Results[j,7] = _data["nits"]
        
 
         #=
@@ -725,7 +725,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     ## plot
     #Plotter.rc("font", size=20)
     yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2]
-    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7]
+    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
     Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
