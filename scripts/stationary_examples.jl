@@ -59,7 +59,14 @@ default_args = Dict(
     "stab2" => (1.5, 0),
 )
 
-function filename(data)
+"""
+    filename(data) -> String
+
+Build a DrWatson-compatible filename string for a given `data` dict.
+All key parameters are abbreviated and the result is prefixed with
+`"data/projects/compressible_stokes/"`.
+"""
+function filename(data; prefix = "data/projects/compressible_stokes/")
     μ = data["μ"]
     λ = data["λ"]
     γ = data["γ"]
@@ -91,7 +98,7 @@ function filename(data)
     sname = savename(essential_params;
                      allowedtypes = (Real, String, SubString, Symbol,
                                      Tuple{Real, Real}))
-    sname = "data/projects/compressible_stokes/" * sname
+    sname = prefix * sname
     return sname
 end
 
@@ -214,8 +221,17 @@ function run_single(data; kwargs...)
     rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
     @info rinflow, routflow, rhom
 
-    ## define Stokes problem
-    PD = ProblemDescription("Stokes problem")
+    ## define Stokes problem# name depending on convection type
+    if convectiontype === NoConvection
+        pdname = "Compressible Stokes problem"
+    elseif convectiontype === OseenConvection
+        pdname = "Compressible Oseen problem"
+    elseif convectiontype === RotationForm
+        pdname = "Compressible Navier-Stokes problem (rotation form)"
+    else
+        pdname = "Compressible Navier-Stokes problem"
+    end
+    PD = ProblemDescription(pdname)
     assign_unknown!(PD, u)
     assign_operator!(PD, BilinearOperator([grad(u)]; factor = μ, store = true, kwargs...))
     assign_operator!(PD, BilinearOperator([div_u]; factor = λ, store = true, kwargs...))
@@ -275,6 +291,19 @@ function run_single(data; kwargs...)
     sol = nothing
     rho_mean = M_exact / sum(xgrid[CellVolumes])
 
+    """
+    callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
+
+    Pseudo-time-step callback for the continuity equation.  Assembled at each
+    stationarity iteration:
+
+    * updates upwind mass matrix `D` discretizing `∇·(ϱu)` on interior faces (DG)
+    * update inflow source vector `brho` and outflow matrix correction from boundary data
+    * updates jump stabilisation on interior faces (`stab1`) and mean-density
+      stabilisation pulling toward `rho_mean` (`stab2`)
+    * accumulates `A += τ·D`, `b += τ·brho` → implicit step `(I + τD)ϱ = b`
+      with time-step `tau = min(V_cell / ‖rowsum(D)‖) / 2`
+    """
     function callback!(A, b, args; assemble_matrix = true,
                        assemble_rhs = true, time = 0, kwargs...)
 
@@ -504,6 +533,7 @@ function compute_errors(config; force_recompute = false, kwargs...)
 
     return data
 end
+
 # ==============================================================================
 # Plotting infrastructure (filenames, directories, single solution plot)
 # ==============================================================================
