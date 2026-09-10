@@ -25,6 +25,8 @@ export grid
 export prepare_data, filename, run_single
 
 
+include("utilities.jl")
+
 include("kernels.jl")
 export stab_kernel!
 export kernel_continuity!

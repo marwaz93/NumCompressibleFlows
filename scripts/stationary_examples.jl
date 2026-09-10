@@ -16,6 +16,10 @@ using ColorTypes
 using Latexify
 using Plots
 
+# ==============================================================================
+# Default configuration & helpers
+# ==============================================================================
+
 """
     safe_produce_or_load(data; force = false, kwargs...)
 
@@ -91,6 +95,18 @@ function filename(data)
     return sname
 end
 
+function load_data(; kwargs...)
+    data = deepcopy(default_args)
+    for (k, v) in kwargs
+        data[String(k)] = v
+    end
+    return data
+end
+
+# ==============================================================================
+# Convection helper methods
+# ==============================================================================
+
 """
     _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, kwargs...)
 
@@ -123,6 +139,10 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{NoConvection}, order, kwargs...)
     nothing
 end
+
+# ==============================================================================
+# Core solver: run_single
+# ==============================================================================
 
 function run_single(data; kwargs...)
     # -- problem parameters --
@@ -357,6 +377,9 @@ function run_single(data; kwargs...)
     return data
 end
 
+# ==============================================================================
+# Error computation
+# ==============================================================================
 
 function compute_errors(config; force_recompute = false, kwargs...)
     fpath = filename(config) * ".jld2"
@@ -481,7 +504,9 @@ function compute_errors(config; force_recompute = false, kwargs...)
 
     return data
 end
-
+# ==============================================================================
+# Plotting infrastructure (filenames, directories, single solution plot)
+# ==============================================================================
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
 for p in [
@@ -504,7 +529,7 @@ end
 Build a filename for a plot using `savename` with parameters selected by
 `free_parameter`.  Each free parameter freezes a different subset of the
 remaining parameters for inclusion in the savename. Returns a relative
-path string ending in ```.png```.
+path string ending in `.png`.
 """
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"]
@@ -550,15 +575,6 @@ function filename_plots(data; prefix = "", free_parameter = "")
     return sname
 end
 
-
-function load_data(; kwargs...)
-    data = deepcopy(default_args)
-    for (k, v) in kwargs
-        data[String(k)] = v
-    end
-    return data
-end
-
 """
     plot_single(; Plotter = PyPlot, force = false, kwargs...)
 
@@ -596,68 +612,9 @@ function plot_single(; Plotter = PyPlot, force = false, kwargs...)
     return data
 end
 
-
-function interpolate_BR_to_P2!(u_P2::FEVectorBlock, u_BR::FEVectorBlock)
-    FES_BR = u_BR.FES
-    FES_P2 = u_P2.FES
-    xgrid_bary = u_P2.FES.xgrid
-    xgrid = u_BR.FES.xgrid
-    cellparents = xgrid_bary[CellParents]
-    cellnodes_bary = xgrid_bary[CellNodes]
-
-    dofs_BR = view(u_BR)
-    dofs_P2 = view(u_P2)
-    facedofs_P2 = FES_P2[FaceDofs] # NNNNNNFFF
-
-    # node dofs of coarse grid remain unchanged
-    nnodes = num_nodes(xgrid)
-    nnodes_bary = num_nodes(xgrid_bary)
-    nfaces_bary = num_sources(facedofs_P2)
-    for n = 1 : nnodes
-        dofs_P2[n] = dofs_BR[n]
-        dofs_P2[n+(nnodes_bary+nfaces_bary)] = dofs_BR[n + nnodes]
-    end
-
-    ## define PointEvaluator for uBR
-    PE = PointEvaluator([id(1)], [u_BR])
-    evalBR = zeros(Float64, 2)
-    xref_center = [1/3, 1/3]
-    xref_outer = [[1/2, 0], [1/2, 1/2], [0, 1/2]]
-    xref_inner = [[1/6, 1/6], [4/6, 1/6], [1/6, 4/6]]
-    cell::Int = 0
-
-    ncells_bary = num_cells(xgrid_bary)
-    cellfaces_bary = xgrid_bary[CellFaces]
-    node_offset = (nnodes_bary+nfaces_bary)
-    face_offset = node_offset + nnodes_bary
-    for cell_bary = 1 : ncells_bary
-        cell = cellparents[cell_bary]
-
-        # determine on which part of the coarse triangle we are
-        child_type = mod(cell_bary - 1, 3) + 1 
-
-        if child_type == 1
-            # set new vertex in center (xref = [1/3, 1/3, 1/3])
-            new_node = cellnodes_bary[3, cell_bary]
-            evaluate_bary!(evalBR, PE, xref_center, cell)
-            dofs_P2[new_node] = evalBR[1]
-            dofs_P2[node_offset + new_node] = evalBR[2]
-        end
-
-        # set dof on outer face
-        face_outer = cellfaces_bary[1, cell_bary]
-        evaluate_bary!(evalBR, PE, xref_outer[child_type], cell)
-        dofs_P2[nnodes_bary + face_outer] = evalBR[1]
-        dofs_P2[face_offset + face_outer] = evalBR[2]
-    
-        # set dof on inner face
-        face_inner = cellfaces_bary[3, cell_bary]
-        evaluate_bary!(evalBR, PE, xref_inner[child_type], cell)
-        dofs_P2[nnodes_bary + face_inner] = evalBR[1]
-        dofs_P2[face_offset + face_inner] = evalBR[2]
-    end
-end
-
+# ==============================================================================
+# Convergence history plot
+# ==============================================================================
 
 function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, force_recompute = false, kwargs...)
 
@@ -691,23 +648,23 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2]
     xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
     Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
-    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,5]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||", grid=true)
-    Plotter.plot!(NDoFs, Results[:,7]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"nits", grid=true)
-    Plotter.plot!(NDoFs, 0.5*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
-    Plotter.plot!(NDoFs, (1e+1)*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
+    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||")
+    Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||")
+    Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||")
+    Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||")
+    Plotter.plot!(NDoFs, Results[:,5]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||")
+    Plotter.plot!(NDoFs, Results[:,7]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"nits")
+    Plotter.plot!(NDoFs, 0.5*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)")
+    Plotter.plot!(NDoFs, (1e+1)*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)")
 
-    #Plotter.plot!(NDofs, 0.5*NDofs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)", grid=true)
-    #Plotter.plot!(NDofs, 0.5*NDofs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)", grid=true)
-    #Plotter.plot!(NDoFs, 100*NDoFs.^(-1.25); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^{2.5})", grid=true)
-    
     Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
     Plotter.savefig(filename_plots(data))
 end
+
+# ==============================================================================
+# Parameter study plots
+# ==============================================================================
 
 function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
     nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
@@ -735,8 +692,7 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
     xticks = μ
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
     for n = 1 : length(nrefs)
-        #Plotter.plot!(μ, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-        Plotter.plot!(μ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+        Plotter.plot!(μ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
     end
     for n = 1 : length(nrefs)
         Plotter.plot!(μ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
@@ -748,6 +704,125 @@ function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6
         
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "μ"))
+end
+
+function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    γ = γ isa AbstractVector ? γ : [γ]
+    data = load_data(; kwargs...)
+    @debug "loading config" data
+    L2u = zeros(Float64, length(γ), length(nrefs))
+    H1u = zeros(Float64, length(γ), length(nrefs))
+    L2ϱ = zeros(Float64, length(γ), length(nrefs))
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(γ)
+            data["γ"] = γ[j]
+            data, ~ = safe_produce_or_load(data)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = γ
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        Plotter.plot!(γ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(γ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "γ", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(γ, L2u; xlabel = "γ", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "γ"))
+end
+
+function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], Plotter = Plots, kwargs...)
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    c = c isa AbstractVector ? c : [c]
+    data = load_data(; kwargs...)
+    @debug "loading config" data
+    L2u = zeros(Float64, length(c), length(nrefs))
+    H1u = zeros(Float64, length(c), length(nrefs))
+    L2ϱ = zeros(Float64, length(c), length(nrefs))
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(c)
+            data["c"] = c[j]
+            data, ~ = safe_produce_or_load(data)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1,1e+2]
+    xticks = c
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"$c_M", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+    print_table(c, L2ϱ; xlabel = "c", ylabels = "|| ϱ - ϱ_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c"))
+end
+
+function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5,1e+6], μ = [1e-4,1e-3,1e-2,1e-1,1] , Plotter = Plots, kwargs...)
+    c = c isa AbstractVector ? c : [c]
+    μ = μ isa AbstractVector ? μ : [μ]
+    data = load_data(; kwargs...)
+    data["nrefs"] = nrefs
+    @debug "loading config" data
+    L2u = zeros(Float64, length(c), length(μ))
+    H1u = zeros(Float64, length(c), length(μ))
+    L2ϱ = zeros(Float64, length(c), length(μ))
+
+    for n = 1 : length(μ)
+        data["μ"] = μ[n]
+        for j = 1 : length(c)
+            data["c"] = c[j]
+            data, ~ = safe_produce_or_load(data)
+            L2u[j,n] = data["Error(L2,u)"]
+            H1u[j,n] = data["Error(H1,u)"]
+            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" μ =  $μk" for μk in μ]
+    yticks = [1e-12,1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e+0,1e+1,1e+2]
+    xticks = c
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(μ)
+        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")
+    end
+    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"c_\mathrm{Ma}", gridalpha = 0.5, grid=true)
+
+    ##
+    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
+
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "cμ"))
 end
 
 function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1], Plotter = Plots, kwargs...)
@@ -776,8 +851,8 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2
     xticks = c1
     Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
     for n = 1 : length(nrefs)
-        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-         Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
+        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])")
+        Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
     end
     for n = 1 : length(nrefs)
         Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
@@ -790,7 +865,48 @@ function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "c1"))
 end
-# Plotting c_s for reconstruction
+
+function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
+    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
+    c2 = c2 isa AbstractVector ? c2 : [c2]
+    data = load_data(; kwargs...)
+    @debug "loading config" data
+    L2u = zeros(Float64, length(c2), length(nrefs))
+    H1u = zeros(Float64, length(c2), length(nrefs))
+    L2ϱ = zeros(Float64, length(c2), length(nrefs))
+
+    for n = 1 : length(nrefs)
+        data["nrefs"] = nrefs[n]
+        for j = 1 : length(c2)
+                data["stab2"] = (1.5, c2[j])
+                data, ~ = safe_produce_or_load(data)
+                L2u[j,n] = data["Error(L2,u)"]
+                H1u[j,n] = data["Error(H1,u)"]
+                L2ϱ[j,n] = data["Error(L2,ϱ)"]
+        end
+    end
+
+    ## plot
+    labels = [" level $n" for n in nrefs]
+    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
+    xticks = c2
+    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c2, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])")
+        Plotter.plot!(c2, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
+    end
+    for n = 1 : length(nrefs)
+        Plotter.plot!(c2, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    end
+    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c2", gridalpha = 0.5, grid=true)
+        
+    ##
+    print_table(c2, L2u; xlabel = "c2", ylabels = "|| u - u_h || ".* labels)
+        
+    ## save
+    Plotter.savefig(filename_plots(data; free_parameter = "c2"))
+end
+
 function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2,1e3,1e4,1e5], Plotter = Plots, kwargs...)
     reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
     c1 = c1 isa AbstractVector ? c1 : [c1]
@@ -891,166 +1007,4 @@ function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false]
 
     ## save
     Plotter.savefig(filename_plots(data; free_parameter = "α"))
-end
-function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    c2 = c2 isa AbstractVector ? c2 : [c2]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c2), length(nrefs))
-    H1u = zeros(Float64, length(c2), length(nrefs))
-    L2ϱ = zeros(Float64, length(c2), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(c2)
-                data["stab2"] = (1.5, c2[j])
-                data, ~ = safe_produce_or_load(data)
-                L2u[j,n] = data["Error(L2,u)"]
-                H1u[j,n] = data["Error(H1,u)"]
-                L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = c2
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c2, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-         Plotter.plot!(c2, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c2, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c2", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(c2, L2u; xlabel = "c2", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    Plotter.savefig(filename_plots(data; free_parameter = "c2"))
-end
-
-function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    γ = γ isa AbstractVector ? γ : [γ]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(γ), length(nrefs))
-    H1u = zeros(Float64, length(γ), length(nrefs))
-    L2ϱ = zeros(Float64, length(γ), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(γ)
-            data["γ"] = γ[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = γ
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        #Plotter.plot!(γ, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-        Plotter.plot!(γ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(γ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "γ", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(γ, L2u; xlabel = "γ", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    Plotter.savefig(filename_plots(data; free_parameter = "γ"))
-end
-
-function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    c = c isa AbstractVector ? c : [c]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c), length(nrefs))
-    H1u = zeros(Float64, length(c), length(nrefs))
-    L2ϱ = zeros(Float64, length(c), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(c)
-            data["c"] = c[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1,1e+2]
-    xticks = c
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        #Plotter.plot!(c, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])") # "||∇(u-u_h)|| level = $(nrefs[n])"
-        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])") # "||ϱ - ϱ_h|| level = $(nrefs[n])"
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"$c_M", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
-    print_table(c, L2ϱ; xlabel = "c", ylabels = "|| ϱ - ϱ_h || ".* labels)
-    
-        
-    ## save
-    Plotter.savefig(filename_plots(data; free_parameter = "c"))
-end
-
-function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5,1e+6], μ = [1e-4,1e-3,1e-2,1e-1,1] , Plotter = Plots, kwargs...)
-    c = c isa AbstractVector ? c : [c]
-    μ = μ isa AbstractVector ? μ : [μ]
-    data = load_data(; kwargs...)
-    data["nrefs"] = nrefs
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c), length(μ))
-    H1u = zeros(Float64, length(c), length(μ))
-    L2ϱ = zeros(Float64, length(c), length(μ))
-
-    for n = 1 : length(μ)
-        data["μ"] = μ[n]
-        for j = 1 : length(c)
-            data["c"] = c[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" μ =  $μk" for μk in μ]
-    yticks = [1e-12,1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e+0,1e+1,1e+2]
-    xticks = c
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(μ)
-        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")
-    end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"c_\mathrm{Ma}", gridalpha = 0.5, grid=true)
-
-    ##
-    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
-
-    ## save
-    Plotter.savefig(filename_plots(data; free_parameter = "cμ"))
 end
