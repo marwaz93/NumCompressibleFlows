@@ -35,6 +35,11 @@ abstract type NoConvection <: ConvectionType end
 abstract type StandardConvection <: ConvectionType end
 abstract type OseenConvection <: ConvectionType end
 abstract type RotationForm <: ConvectionType end
+abstract type KarperConvection <: ConvectionType end
+
+abstract type UpwindType end
+abstract type StandardUpwind <: UpwindType end
+abstract type PointwiseUpwind <: UpwindType end
 
 abstract type CoriolisType end
 abstract type NoCoriolis <: CoriolisType end
@@ -197,33 +202,8 @@ function prepare_data(
             
         else
             f = - μ * Δu  - λ*∇divu + conv  # f = L(u)
-
-        
+        end
     end
-end
-@info f, g
-
-## Christian's def of f & g 
-   #=
-    if EOSType <: IdealGasLaw
-        g = c * Symbolics.gradient(log(ϱ), [x, y])
-    elseif EOSType <: PowerLaw
-        γ = EOSType.parameters[1]
-        @assert γ > 1
-        g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # testing welll-balance
-    end
-
-    ## gravity ϱg = - Δu + ϱ∇log(ϱ)
-    if laplacian_in_rhs 
-        f = - μ * Δu  - λ*∇divu   
-        
-    else
-        g -= - μ * Δu / ϱ  - λ*∇divu / ϱ
-        f = 0 * Δu 
-    end
-   =#
-
-    #Δu = Symbolics.derivative(∇u[1,1], [x]) + Symbolics.derivative(∇u[2,2], [y])
 
     ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
     u_eval = build_function(u, x, y, expression = Val{false})[2]

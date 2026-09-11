@@ -7,6 +7,8 @@ using SimplexGridFactory
 using GridVisualize
 using Symbolics: Symbolics, @variables, build_function
 using LinearAlgebra
+using UnicodePlots
+using Term
 
 using DrWatson
 using JLD2
@@ -50,6 +52,7 @@ default_args = Dict(
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
     "convectiontype" => NoConvection,
+    "upwindtype" => StandardUpwind,
     "coriolistype" => NoCoriolis,
     "eostype" => IdealGasLaw,
     "gridtype" => Mountain2D,
@@ -120,7 +123,7 @@ end
 Dispatch on convectiontype to add the appropriate convection operator.
 """
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:StandardConvection}, order, kwargs...)
+                          ::Type{<:StandardConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_standardconvection_linearoperator!, [id_u],
         [id_u, grad(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -128,14 +131,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:OseenConvection}, order, kwargs...)
-    assign_operator!(PD, BilinearOperator(
-        kernel_oseenconvection!(u!, ϱ!), [id_u],
-        [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
+                          ::Type{<:OseenConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+    assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:RotationForm}, order, kwargs...)
+                          ::Type{<:RotationForm}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_rotationform_linearoperator!, [id_u, div_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -143,8 +144,59 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{NoConvection}, order, kwargs...)
+                          ::Type{NoConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
     nothing
+end
+
+function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
+                          ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+
+    # project current velocity to P0
+    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    u0 = FEVector(FES_P0)    
+    bconv = FEVector(FES_P0)
+
+    T = nothing 
+    
+
+    function callback_karper!(A, b, args; assemble_matrix = true,
+                       assemble_rhs = true, time = 0, kwargs...)
+
+        if assemble_rhs
+            if isnothing(T)
+                T = compute_lazy_interpolation_jacobian(FES_P0, args[1].FES)
+            end
+            # project current velocity (=args[1]) onto P0 --> ̂u
+            u0.entries .= T * view(args[1])
+            lazy_interpolate!(u0[1], args, [id(1)]; quadorder = 2)
+
+            ## computes integrals of u ⋅ n on all faces and use them for upwinding
+            fill!(fluxes, 0)
+            evaluate!(fluxes, FluxIntegrator, [args[1]])
+
+            fill!(bconv.entries, 0)
+            assemble!(bconv, LinearOperatorDG(
+            kernel_upwind_convection!, [jump(id(1))], [id(1), this(id(2)), other(id(2)), this(id(3)), other(id(3))];
+            factor = -1, quadorder = 0, entities = ON_IFACES, params = [fluxes]), [args[1], args[2], u0[1]])
+            
+            
+            if stab1[2] > 0
+                assemble!(bconv, LinearOperatorDG(
+                    velocity_jump_stab_kernel!(stab1[1], 3.0),
+                    [jump(id(1))], [jump(id(2)), average(id(3))];
+                    factor = stab1[2]*2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
+            end
+            
+            
+            b .+= view(bconv.entries' * T,:)
+
+        end
+
+    end                
+    assign_operator!(PD, CallbackOperator(
+        callback_karper!, [u, ϱ]; linearized_dependencies = [u],
+        modifies_rhs = true, modifies_matrix = false, kwargs...,
+        name = "upwind convection term"))
 end
 
 # ==============================================================================
@@ -178,6 +230,7 @@ function run_single(data; kwargs...)
     pressure_in_f  = data["pressure_in_f"]
     laplacian_in_rhs = data["laplacian_in_rhs"]
     convectiontype = data["convectiontype"]
+    upwindtype      = data["upwindtype"]
     coriolistype   = data["coriolistype"]
     stab1          = data["stab1"]
     stab2          = data["stab2"]
@@ -242,8 +295,12 @@ function run_single(data; kwargs...)
             [id_u, id(ϱ)]; quadorder = 2*order + 1, factor = -1, kwargs...))
     end
 
+    ## prepare upwind flux storage
+    FluxIntegrator = ItemIntegrator([normalflux(1)]; quadorder = 2, entities = ON_FACES)
+    fluxes = zeros(Float64, 1, size(xgrid[FaceCells], 2))
+
     ## add convection term (dispatched by convectiontype)
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, kwargs...)
+    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
 
     ## boundary data and source terms
     assign_operator!(PD, LinearOperator(
@@ -290,6 +347,7 @@ function run_single(data; kwargs...)
     rowsums = nothing
     sol = nothing
     rho_mean = M_exact / sum(xgrid[CellVolumes])
+    
 
     """
     callback!(A, b, args; assemble_matrix = true, assemble_rhs = true, time = 0, kwargs...)
@@ -309,11 +367,23 @@ function run_single(data; kwargs...)
 
         fill!(D.entries.cscmatrix.nzval, 0)
         fill!(brho.entries, 0)
-        assemble!(D, BilinearOperatorDG(
-            kernel_upwind!, [jump(id(1))],
-            [this(id(1)), other(id(1))], [id(1)];
-            factor = 1, quadorder = order+1, entities = ON_IFACES), sol)
+        
+        if upwindtype === StandardUpwind
+            ## computes integrals of u ⋅ n on all faces and use them for upwinding
+            fill!(fluxes, 0)
+            evaluate!(fluxes, FluxIntegrator, [args[1]])
 
+            assemble!(D, BilinearOperatorDG(
+                kernel_upwind2!, [jump(id(1))],
+                [this(id(1)), other(id(1))];
+                factor = 1, quadorder = order+1, entities = ON_IFACES, params = [fluxes]))
+        elseif upwindtype === PointwiseUpwind
+            ## computes u ⋅ n at quadrature points and use them for upwinding
+            assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))],
+                [this(id(1)), other(id(1))], [id(1)];
+                factor = 1, quadorder = order+1, entities = ON_IFACES), sol)
+        end
+        
         ## check diagonal dominance
         mul!(rowsums, D.entries, one_vector)
 
@@ -371,9 +441,9 @@ function run_single(data; kwargs...)
     sol = nothing
 
     ## finite element spaces and solution vector
-    FES  = [FESpace{FETypes[j]}(xgrid) for j in 1:3]
+    FES::Array{FESpace{Float64, Int32},1}  = [FESpace{FETypes[j]}(xgrid) for j in 1:3]
     sol  = FEVector(FES; tags = [u, ϱ, p])
-
+    
     ## initial guess
     fill!(sol[ϱ], M)
     interpolate!(sol[u], u!)
@@ -398,10 +468,14 @@ function run_single(data; kwargs...)
 
     ## save data
     data["ndofs"]    = length(sol.entries)
+    data["nits"]     = nits
     data["solution"] = sol
     data["grid"]     = xgrid
     data["unknown_u"] = u
     data["unknown_ϱ"] = ϱ
+
+    ## plot unicode plot
+    ExtendableFEM.plot([id(u), id(ϱ)], sol; Plotter = UnicodePlots)
 
     return data
 end
@@ -521,7 +595,6 @@ function compute_errors(config; force_recompute = false, kwargs...)
                                      sum(error[5, :]) + sum(error[6, :]))
         data["Error(L2,ϱ)"]  = sqrt(sum(error[7, :]))
         data["Error(L2,ϱu)"] = sqrt(sum(error[8, :]) + sum(error[9, :]))
-        data["nits"]         = nits
     else
         @info "skipping error calculation (already computed)"
     end

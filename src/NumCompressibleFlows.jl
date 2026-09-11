@@ -17,7 +17,8 @@ include("problem_definitions.jl")
 export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, RigidBodyRotation
 export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
 export EOSType, IdealGasLaw, PowerLaw
-export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm
+export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm, KarperConvection
+export UpwindType, StandardUpwind, PointwiseUpwind
 export CoriolisType, NoCoriolis, BetaPlaneApproximation
 export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
 export inflow_regions, outflow_regions
@@ -30,11 +31,11 @@ include("utilities.jl")
 include("kernels.jl")
 export stab_kernel!
 export kernel_continuity!
-export kernel_upwind!
+export kernel_upwind!, kernel_upwind2!, kernel_upwind_convection!
 export exact_error!
 export standard_gravity!
 export energy_kernel!
-export density_jump_stab_kernel!
+export density_jump_stab_kernel!, velocity_jump_stab_kernel!
 export eos!
 export kernel_standardconvection_linearoperator!
 export kernel_rotationform_linearoperator!

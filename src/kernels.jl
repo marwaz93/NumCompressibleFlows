@@ -26,6 +26,13 @@ function density_jump_stab_kernel!(exponent, γ)
     end
 end
 
+function velocity_jump_stab_kernel!(exponent, γ)
+    function closure(result, args, qpinfo)
+        ζ = max(0,2 - γ)
+        result .= args[1] .* args[2] .* qpinfo.volume^exponent
+    end
+end
+
 function multiply_h_linear!(power)
     function closure(result, qpinfo)
         result .*= qpinfo.volume^power
@@ -96,6 +103,31 @@ function kernel_upwind!(result, input, u, qpinfo) # u = [id(u)], input = [this(i
         result[1] = input[1] * flux # rho_left * flux 
     else
         result[1] = input[2] * flux # rho_right * flux
+    end
+end
+
+## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
+function kernel_upwind2!(result, input, qpinfo) # input = [this(id(ϱ)), other(id(ϱ))]
+    flux = qpinfo.params[1][qpinfo.item] # dot(u, qpinfo.normal) # u * n
+    return if flux > 0
+        result[1] = input[1] * flux # rho_left * flux 
+    else
+        result[1] = input[2] * flux # rho_right * flux
+    end
+end
+
+## convection term Karper style
+function kernel_upwind_convection!(result, args, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
+    u = view(args, 1:2)
+    ϱL = view(args, 3)
+    ϱR = view(args, 4)
+    u0L = view(args, 5:6)
+    u0R = view(args, 7:8) 
+    flux = qpinfo.params[1][qpinfo.item] #dot(u, qpinfo.normal) # u * n
+    return if flux > 0
+        result .= ϱL .* u0L 
+    else
+        result .= ϱR .* u0R
     end
 end
 
