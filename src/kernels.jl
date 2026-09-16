@@ -98,7 +98,7 @@ end
 
 ## kernel for (u⋅n ϱ^upw, λ) ON_IFACES in continuity equation
 function kernel_upwind!(result, input, u, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
-    flux = dot(u, qpinfo.normal) # u * n
+    flux = dot(u, qpinfo.normal) # u * n (normal here is face normal)
     return if flux > 0
         result[1] = input[1] * flux # rho_left * flux 
     else
@@ -125,9 +125,9 @@ function kernel_upwind_convection!(result, args, qpinfo) # u = [id(u)], input = 
     u0R = view(args, 7:8) 
     flux = qpinfo.params[1][qpinfo.item] #dot(u, qpinfo.normal) # u * n
     return if flux > 0
-        result .= ϱL .* u0L 
+        result .= ϱL .* u0L *  flux
     else
-        result .= ϱR .* u0R
+        result .= ϱR .* u0R * flux
     end
 end
 

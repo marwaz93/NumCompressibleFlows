@@ -168,11 +168,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             end
             # project current velocity (=args[1]) onto P0 --> ̂u
             u0.entries .= T * view(args[1])
-            lazy_interpolate!(u0[1], args, [id(1)]; quadorder = 2)
+            #lazy_interpolate!(u0[1], args, [id(1)]; quadorder = 2)
 
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
             fill!(fluxes, 0)
             evaluate!(fluxes, FluxIntegrator, [args[1]])
+            view(fluxes,:) ./= xgrid[FaceVolumes]
 
             fill!(bconv.entries, 0)
             assemble!(bconv, LinearOperatorDG(
@@ -372,6 +373,7 @@ function run_single(data; kwargs...)
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
             fill!(fluxes, 0)
             evaluate!(fluxes, FluxIntegrator, [args[1]])
+            view(fluxes,:) ./= xgrid[FaceVolumes]
 
             assemble!(D, BilinearOperatorDG(
                 kernel_upwind2!, [jump(id(1))],
@@ -648,22 +650,23 @@ function filename_plots(data; prefix = "", free_parameter = "")
     reconstruct = data["reconstruct"]
     convectiontype = string(data["convectiontype"])
     pressure_in_f = data["pressure_in_f"]
+    upwindtype = data["upwindtype"]
 
     # Select which params go into savename depending on free_parameter
     essential_params = if free_parameter == "μ"
-        @dict c γ ϵ c1 nrefs reconstruct convectiontype
+        @dict c γ ϵ c1 nrefs reconstruct convectiontype upwindtype
     elseif free_parameter == "γ"
-        @dict μ c ϵ c1 nrefs reconstruct convectiontype
+        @dict μ c ϵ c1 nrefs reconstruct convectiontype upwindtype
     elseif free_parameter == "c"
-        @dict μ γ ϵ c1 nrefs reconstruct convectiontype
+        @dict μ γ ϵ c1 nrefs reconstruct convectiontype upwindtype
     elseif free_parameter == "cμ"
-        @dict γ ϵ c1 nrefs reconstruct convectiontype
+        @dict γ ϵ c1 nrefs reconstruct convectiontype upwindtype
     elseif free_parameter == "c1"
-        @dict μ c γ ϵ nrefs reconstruct convectiontype
+        @dict μ c γ ϵ nrefs reconstruct convectiontype upwindtype
     elseif free_parameter in ("c2", "α")
-        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype
+        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype upwindtype
     else
-        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype pressure_in_f
+        @dict μ c γ ϵ c1 nrefs reconstruct convectiontype pressure_in_f upwindtype
     end
     sname = savename(essential_params;
                      allowedtypes = (Real, String, SubString, Symbol,
