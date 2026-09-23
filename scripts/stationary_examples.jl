@@ -56,8 +56,8 @@ default_args = Dict(
     "coriolistype" => NoCoriolis,
     "eostype" => IdealGasLaw,
     "gridtype" => Mountain2D,
-    "pressure_in_f" => false,
-    "laplacian_in_rhs" => true,
+    "pressure_in_f" => true,
+    "others_in_f" => true,
     "stab1" => (1-0.1, 0),
     "stab2" => (1.5, 0),
 )
@@ -69,7 +69,7 @@ Build a DrWatson-compatible filename string for a given `data` dict.
 All key parameters are abbreviated and the result is prefixed with
 `"data/projects/compressible_stokes/"`.
 """
-function filename(data; prefix = "data/projects/compressible_stokes/")
+function filename(data; prefix = "data/projects/compressible_stokes_repeat/")
     μ = data["μ"]
     λ = data["λ"]
     γ = data["γ"]
@@ -95,8 +95,10 @@ function filename(data; prefix = "data/projects/compressible_stokes/")
     pressure_in_f = data["pressure_in_f"]
     stab1 = data["stab1"]
     stab2 = data["stab2"]
+    convectiontype = data["convectiontype"]
 
-    essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype pressure_in_f stab1 stab2
+
+    essential_params = @dict μ λ γ c M τfac ufac nrefs order reconstruct vtype dtype etype gtype ctype cortype pressure_in_f stab1 stab2 convectiontype
 
     sname = savename(essential_params;
                      allowedtypes = (Real, String, SubString, Symbol,
@@ -123,7 +125,7 @@ end
 Dispatch on convectiontype to add the appropriate convection operator.
 """
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:StandardConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+                          ::Type{<:StandardConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_standardconvection_linearoperator!, [id_u],
         [id_u, grad(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -131,12 +133,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:OseenConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+                          ::Type{<:OseenConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:RotationForm}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+                          ::Type{<:RotationForm}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_rotationform_linearoperator!, [id_u, div_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -144,12 +146,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{NoConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+                          ::Type{NoConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
     nothing
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+                          ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES,  kwargs...)
 
     # project current velocity to P0
     FES_P0 = FESpace{L2P0{2}}(xgrid)
@@ -200,6 +202,55 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
         name = "upwind convection term"))
 end
 
+function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
+                          ::Type{<:NewConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+    assign_operator!(PD, LinearOperator(
+        kernel_new_rotationform_linearoperator!, [id_u],
+        [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
+        factor = -1, kwargs...))
+         # project current velocity to P0
+    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    u0 = FEVector(FES_P0)    
+    bconv = FEVector(FES[1])
+    
+
+    function callback_newconvection!(A, b, args; assemble_matrix = true,
+                       assemble_rhs = true, time = 0, kwargs...)
+
+        if assemble_rhs
+            lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = input[1]^2+input[2]^2;), quadorder = 4)
+
+            ## computes integrals of u ⋅ n on all faces and use them for upwinding
+            fill!(fluxes, 0)
+            evaluate!(fluxes, FluxIntegrator, [args[1]])
+            view(fluxes,:) ./= xgrid[FaceVolumes]
+
+            fill!(bconv.entries, 0)
+            assemble!(bconv, LinearOperatorDG(
+            kernel_upwind_newconvection!, [normalflux(1)], [this(id(2)), other(id(2)), jump(id(3))];
+            factor = -1/2, quadorder = 0, entities = ON_IFACES, params = [fluxes]), [args[1], args[2], u0[1]])
+            
+            
+            if stab1[2] > 0
+                assemble!(bconv, LinearOperatorDG(
+                    velocity_jump_stab_kernel!(stab1[1], 3.0),
+                    [jump(id(1))], [jump(id(2)), average(id(3))];
+                    factor = stab1[2]*2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
+            end
+
+            b .+= bconv.entries
+            
+        end
+
+    end                
+    assign_operator!(PD, CallbackOperator(
+        callback_newconvection!, [u, ϱ]; linearized_dependencies = [u],
+        modifies_rhs = true, modifies_matrix = false, kwargs...,
+        name = "upwind convection term"))
+end
+
+
+
 # ==============================================================================
 # Core solver: run_single
 # ==============================================================================
@@ -229,7 +280,7 @@ function run_single(data; kwargs...)
     eostype        = data["eostype"]
     gridtype       = data["gridtype"]
     pressure_in_f  = data["pressure_in_f"]
-    laplacian_in_rhs = data["laplacian_in_rhs"]
+    others_in_f = data["others_in_f"]
     convectiontype = data["convectiontype"]
     upwindtype      = data["upwindtype"]
     coriolistype   = data["coriolistype"]
@@ -244,7 +295,7 @@ function run_single(data; kwargs...)
     ## prepare data and grid
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
         prepare_data(velocitytype, densitytype, eostype;
-                     laplacian_in_rhs, pressure_in_f, M, c, μ, λ, γ,
+                     others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, τfac, nrefs, kwargs...)
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
 
@@ -267,6 +318,9 @@ function run_single(data; kwargs...)
         id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u)
         div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u)
     end
+
+    ## define FE spaces
+    FES::Array{FESpace{Float64, Int32},1}  = [FESpace{FETypes[j]}(xgrid) for j in 1:3]
 
     ## in/outflow regions
     testgrid   = NumCompressibleFlows.grid(gridtype; nref = 1)
@@ -301,7 +355,7 @@ function run_single(data; kwargs...)
     fluxes = zeros(Float64, 1, size(xgrid[FaceCells], 2))
 
     ## add convection term (dispatched by convectiontype)
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, xgrid, stab1, FluxIntegrator, fluxes, kwargs...)
+    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
 
     ## boundary data and source terms
     assign_operator!(PD, LinearOperator(
@@ -437,13 +491,10 @@ function run_single(data; kwargs...)
 
     ## prepare error calculation
     MassIntegrator = ItemIntegrator([id(ϱ)]; resultdim = 1, kwargs...)
-    NDofs = zeros(Int, nrefs)
-    Results = zeros(Float64, nrefs, 5)
 
     sol = nothing
 
     ## finite element spaces and solution vector
-    FES::Array{FESpace{Float64, Int32},1}  = [FESpace{FETypes[j]}(xgrid) for j in 1:3]
     sol  = FEVector(FES; tags = [u, ϱ, p])
     
     ## initial guess
@@ -476,8 +527,14 @@ function run_single(data; kwargs...)
     data["unknown_u"] = u
     data["unknown_ϱ"] = ϱ
 
+    # residuals printing
+    data["res_momentum"] = residual(SC1)
+    data["res_continuity"] = residual(SC2)
+
     ## plot unicode plot
-    ExtendableFEM.plot([id(u), id(ϱ)], sol; Plotter = UnicodePlots)
+    if length(sol.entries) < 1e5
+        ExtendableFEM.plot([id(u), id(ϱ)], sol; Plotter = UnicodePlots)
+    end
 
     return data
 end
@@ -514,13 +571,13 @@ function compute_errors(config; force_recompute = false, kwargs...)
     eostype        = data["eostype"]
     gridtype       = data["gridtype"]
     pressure_in_f  = data["pressure_in_f"]
-    laplacian_in_rhs = data["laplacian_in_rhs"]
+    others_in_f = data["others_in_f"]
     convectiontype = data["convectiontype"]
     coriolistype   = data["coriolistype"]
 
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
         prepare_data(velocitytype, densitytype, eostype;
-                     laplacian_in_rhs, pressure_in_f, M, c, μ, λ, γ,
+                     others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, kwargs...)
     if force_recompute || !haskey(data, "Error(H1,u0)")
         @info "computing divergence-free part of u - u_h"
@@ -615,15 +672,15 @@ end
 
 quickactivate(@__DIR__, "NumCompressibleFlows")
 for p in [
-    "compressible_stokes_paper/convergence_history",
-    "compressible_stokes_paper/penalty_convergence_history",
-    "compressible_stokes_paper/parameter_studies_μ",
-    "compressible_stokes_paper/parameter_studies_γ",
-    "compressible_stokes_paper/parameter_studies_c",
-    "compressible_stokes_paper/parameter_studies_cμ",
-    "compressible_stokes_paper/parameter_studies_c1",
-    "compressible_stokes_paper/parameter_studies_α",
-    "compressible_stokes_paper/parameter_studies_c2",
+    "compressible_stokes_paper_repeat/convergence_history",
+    #"compressible_stokes_paper_repeat/penalty_convergence_history",
+    "compressible_stokes_paper_repeat/parameter_studies_μ",
+    "compressible_stokes_paper_repeat/parameter_studies_γ",
+    "compressible_stokes_paper_repeat/parameter_studies_c",
+    "compressible_stokes_paper_repeat/parameter_studies_cμ",
+    "compressible_stokes_paper_repeat/parameter_studies_c1",
+    "compressible_stokes_paper_repeat/parameter_studies_α",
+    "compressible_stokes_paper_repeat/parameter_studies_c2",
 ]
     mkpath(plotsdir(p))
 end
@@ -673,9 +730,8 @@ function filename_plots(data; prefix = "", free_parameter = "")
                                      Tuple{Real, Real}))
 
     if free_parameter !== ""
-        sname = "plots/compressible_stokes_paper/parameter_studies_$(free_parameter)/" * sname * prefix * ".png"
     else
-        sname = "plots/compressible_stokes_paper/convergence_history/" * sname * prefix * ".png"
+        sname = "plots/compressible_stokes_paper_repeat/convergence_history/" * sname * prefix * ".png"
     end
 
     return sname
@@ -728,7 +784,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     #@show data
     Results = zeros(Float64, length(nrefs), 7)
     NDoFs = zeros(Int, length(nrefs))
-    #Residuals = zeros(Float64, length(nrefs), 2)
+    Residuals = zeros(Float64, length(nrefs), 2)
 
     for (j, lvl) in enumerate(nrefs)
         _data = deepcopy(data)
@@ -743,6 +799,17 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
         Results[j,5] = haskey(_data, "Error(H1,u0)") ? _data["Error(H1,u0)"] : NaN
         Results[j,6] = haskey(_data, "Error(H1,u0)") ? sqrt(_data["Error(H1,u)"]^2 - _data["Error(H1,u0)"]^2) : NaN
         Results[j,7] = _data["nits"]
+
+        if haskey(_data, "res_momentum")
+            Residuals[lvl,1] = _data["res_momentum"]
+            Residuals[lvl,2] = _data["res_continuity"]
+        else
+            @warn "residual information not found, consider rerunning"
+            Residuals[lvl,1] = 1e30
+            Residuals[lvl,2] = 1e30
+        end
+
+        @show Residuals
 
         print_convergencehistory(NDoFs[:], Results[:,[1,2,5,3]]; X_to_h = X ->
             X.^(-1/2), ylabels = [L"\lt{\bu - \uh}" , L"\lt{\nabla \(\bu - \uh\)}", L"\lt{\nabla \(\bu^0 - \uh^0\)}",

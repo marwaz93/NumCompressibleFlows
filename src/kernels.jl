@@ -56,6 +56,16 @@ function kernel_rotationform_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+## kernel for (ϱ rotu × u, v) ON_CELLS in momentum balance
+function kernel_new_rotationform_linearoperator!(result, args, qpinfo)
+    u = view(args,1:2)
+    curlu = view(args, 3)
+    ϱ = view(args, 4)
+    result[1] = -ϱ[1] * curlu[1] * u[2]
+    result[2] = ϱ[1] * curlu[1] * u[1]
+    return nothing
+end
+
 ## kernel for (2ϱω×u, v) ON_CELLS in momentum balance
 function kernel_coriolis_linearoperator!(coriolistype)
     function closure(result, args, qpinfo)
@@ -128,6 +138,18 @@ function kernel_upwind_convection!(result, args, qpinfo) # u = [id(u)], input = 
         result .= ϱL .* u0L *  flux
     else
         result .= ϱR .* u0R * flux
+    end
+end
+
+function kernel_upwind_newconvection!(result, args, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
+    ϱL = view(args, 1)
+    ϱR = view(args, 2)
+    u0_jump = view(args, 3) 
+    flux = qpinfo.params[1][qpinfo.item] #dot(u, qpinfo.normal) # u * n
+    return if flux > 0
+        result .= ϱL .* u0_jump
+    else
+        result .= ϱR .* u0_jump
     end
 end
 

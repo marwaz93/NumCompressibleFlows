@@ -36,6 +36,7 @@ abstract type StandardConvection <: ConvectionType end
 abstract type OseenConvection <: ConvectionType end
 abstract type RotationForm <: ConvectionType end
 abstract type KarperConvection <: ConvectionType end
+abstract type NewConvection <: ConvectionType end
 
 abstract type UpwindType end
 abstract type StandardUpwind <: UpwindType end
@@ -114,7 +115,7 @@ function prepare_data(
     μ = 1,
     γ = 1,
     ufac = 1,
-    laplacian_in_rhs = true,
+   others_in_f  = true,
     pressure_in_f = false,
     λ = 0,
     convectiontype = NoConvection,
@@ -178,13 +179,9 @@ function prepare_data(
             end
             @assert γ > 1
             f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p 
+            g = [0*x, 0*x]
         end
-        if laplacian_in_rhs
-            g =  0 * Δu 
-            f += - μ * Δu - λ*∇divu + conv   # f = L(u) + ∇p (everything in f)
-        else
-            g = - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg = L(u)
-        end
+        
            
     else # Well_balancedness 
         if EOSType <: IdealGasLaw && γ == 1
@@ -195,14 +192,16 @@ function prepare_data(
             end
             @assert γ > 1
             g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # ϱg = ∇p 
+            f = [0*x, 0*x]
         end
-        if laplacian_in_rhs 
-            f =  0 * Δu 
-            g .+= - μ * Δu / ϱ  .- λ*∇divu / ϱ .+ conv /ϱ  # ϱg = L(u) + ∇p (everything in g)
+        
+    end
+
+    if others_in_f
             
-        else
-            f = - μ * Δu  - λ*∇divu + conv  # f = L(u)
-        end
+        f += - μ * Δu - λ*∇divu + conv   # f also has L(u) 
+    else
+        g += - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg also has L(u)
     end
 
     ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
