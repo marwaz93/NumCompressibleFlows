@@ -19,6 +19,16 @@ function kernel_standardconvection_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+
+## kernel for ((ϱu ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
+function kernel_standardconvection_incompressible_linearoperator!(result, args, qpinfo)
+    u = view(args,1:2)
+    ∇u = view(args, 3:6)
+    result[1] = dot(u, view(∇u,1:2))
+    result[2] = dot(u, view(∇u,3:4))
+    return nothing
+end
+
 function density_jump_stab_kernel!(exponent, γ)
     function closure(result, input, args, qpinfo)
         ζ = max(0,2 - γ)
@@ -217,12 +227,14 @@ function eos!(::Type{<:PowerLaw{γ}}; kawrgs...) where {γ}
     return eos_powerlaw!
 end
 
-function stokes_kernel(result, u_ops, qpinfo)
+## mixed Stokes kernel for [grad(u),id(p)] x [grad(v),id(q)], viscosity μ = qpinfo.params[1]
+function stokes_kernel!(result, u_ops, qpinfo)
+    μ = qpinfo.params[1]
     ∇u, p = view(u_ops,1:4), view(u_ops, 5)
-    result[1] = ∇u[1] - p[1]
-    result[2] = ∇u[2]  
-    result[3] = ∇u[3]
-    result[4] = ∇u[4] - p[1]
+    result[1] = μ * ∇u[1] - p[1]
+    result[2] = μ * ∇u[2]
+    result[3] = μ * ∇u[3]
+    result[4] = μ * ∇u[4] - p[1]
     result[5] = -(∇u[1] + ∇u[4])
     # result is then multiplied with [grad(v),id(q)]
     return nothing

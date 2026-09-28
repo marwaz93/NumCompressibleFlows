@@ -116,6 +116,198 @@ function load_data(; kwargs...)
 end
 
 # ==============================================================================
+# Registry of plottable convergence quantities (used by plot_convergencehistory)
+# ==============================================================================
+
+"""
+Registry of convergence curves selectable by symbol in
+`plot_convergencehistory`. Each entry has:
+- `data`: key in the per-level data dict, or a function `data -> value`
+- `label`: legend label
+- optional `style`: Plots keyword arguments (linestyle, marker, markersize, color)
+- optional `xinc = true`: plot against the DOF count of the incompressible system
+- optional `incompressible = true`: selecting it triggers `run_incompressible!`
+  (via `compute_errors(..., compare_incompressible = true)`)
+"""
+const CONV_QUANTITIES = (
+    L2u = (; data = "Error(L2,u)", label = L"|| \mathbf{u} - \mathbf{u}_h \,||"),
+    H1u = (; data = "Error(H1,u)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||"),
+    L2ϱ = (; data = "Error(L2,ϱ)", label = L"|| {ϱ}-ϱ_h \, ||"),
+    L2ϱu = (; data = "Error(L2,ϱu)", label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||"),
+    H1u0 = (; data = "Error(H1,u0)", label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||"),
+    H1u1 = (; data = d -> sqrt(d["Error(H1,u)"]^2 - d["Error(H1,u0)"]^2),
+              label = L"||  ∇( \mathbf{u}^1 - \mathbf{u}^1_h ) \,||"),
+    nits = (; data = "nits", label = L"nits"),
+    H1u_inc = (; data = "Error(H1,u_inc)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h^\infty)\,||",
+                  incompressible = true, xinc = true,
+                  style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :orange)),
+    L2u_inc = (; data = "Error(L2,u_inc)", label = L"|| \mathbf{u} - \mathbf{u}_h^\infty\,||",
+                  incompressible = true, xinc = true,
+                  style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :purple)),
+    L2u_diff = (; data = "Error(L2,u-u_inc)", label = L"|| \mathbf{u}_h - \mathbf{u}_h^\infty\,||",
+                  incompressible = true, xinc = true,
+                  style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :green)),
+    res_momentum = (; data = "res_momentum", label = "residual momentum"),
+    res_continuity = (; data = "res_continuity", label = "residual continuity"),
+)
+
+const DEFAULT_QUANTITIES = (:L2u, :H1u, :L2ϱ, :L2ϱu, :H1u0)
+
+## value of a CONV_QUANTITIES entry for a given level's data dict
+function conv_value(entry, d)
+    if entry.data isa String
+        return get(d, entry.data, NaN)
+    else
+        try
+            return entry.data(d)
+        catch
+            return NaN
+        end
+    end
+end
+
+"""
+    run_incompressible!(data; gauge = 1.0e-6, kwargs...)
+
+Solve the incompressible reference problem (limit c = Inf) of the manufactured
+problem defined by `data` and store the result in the same dict (keys
+`Error(L2,u_inc)`, `Error(H1,u_inc)`, `res_incompressible`,
+`incompressible_solution`). Uses prepare_data with the incompressible switch
+(ϱ ≡ M, all 1/c terms ignored; the dropped ∇p is a pure gradient absorbed by
+the pressure Lagrange multiplier). Exact solution: (curl ξ / M, p = 0).
+The pressure mean is fixed via a small penalty `gauge`.
+"""
+function run_incompressible!(data; kwargs...)
+    @info "running incompressible solver (c = Inf)"
+
+    # -- problem parameters --
+    μ  = data["μ"]
+    λ  = data["λ"]
+    γ  = data["γ"]
+    M  = data["M"]
+    c  = Inf
+    ufac = data["ufac"]
+
+    # -- solving options --
+    nrefs           = data["nrefs"]
+    order           = data["order"]
+    reconstruct     = data["reconstruct"]
+    target_residual = data["target_residual"]
+    bonus_quadorder = data["bonus_quadorder"]
+
+    # -- data of the problem --
+    velocitytype   = data["velocitytype"]
+    densitytype    = data["densitytype"]
+    eostype        = data["eostype"]
+    gridtype       = data["gridtype"]
+    pressure_in_f  = true
+    others_in_f    = true
+    convectiontype = data["convectiontype"]
+    stab1          = data["stab1"]
+
+    ## prepare data with incompressible switch (ρ ≡ M, 1/c terms ignored)
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+        prepare_data(velocitytype, densitytype, eostype;
+                     others_in_f, pressure_in_f, M, c, μ, λ, γ,
+                     ufac, convectiontype, incompressible = true, kwargs...)
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+
+    ## in/outflow regions (same construction as in run_single)
+    testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
+    rinflow  = inflow_regions(velocitytype, gridtype)
+    routflow = outflow_regions(velocitytype, gridtype)
+    rhom     = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
+
+    ## define unknowns
+    u = Unknown("u"; name = "velocity", dim = 2)
+    p = Unknown("p"; name = "pressure", dim = 1)
+    ϱ = Unknown("ϱ"; name = "density", dim = 1) # dummy, only referenced by convection kernels
+
+    ## define FE types and reconstruction operator (same velocity space as run_single)
+    if order == 1
+        FETypes = [H1BR{2}, L2P0{1}]
+        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)
+        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u)
+    elseif order == 2
+        FETypes = [H1P2B{2, 2}, L2P1{1}]
+        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u)
+        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u)
+    else
+        throw(ArgumentError("order must be 1 or 2"))
+    end
+    FES = [FESpace{FETypes[j]}(xgrid) for j in 1:2]
+
+
+    ## define incompressible Stokes problem
+    PD = ProblemDescription("Incompressible Stokes problem (limit c = Inf)")
+    assign_unknown!(PD, u)
+    assign_unknown!(PD, p)
+
+    assign_operator!(PD, BilinearOperator(stokes_kernel!, [grad(u), id(p)]; params = [μ], kwargs...))
+
+    ## fix pressure dof
+    assign_operator!(PD, FixDofs(p; dofs = [1], kwargs...))
+
+    if convectiontype == StandardConvection
+        assign_operator!(PD, LinearOperator(
+        kernel_standardconvection_incompressible_linearoperator!, [id_u],
+        [id_u, grad(u)]; quadorder = 2*order + 1,
+        factor = -M, kwargs...))
+    elseif !(convectiontype === NoConvection)
+        error("convectiontype $(convectiontype) not yet supported by run_incompressible!")
+    end
+
+    assign_operator!(PD, LinearOperator(kernel_rhs!, [id_u]; kwargs...))
+
+    ## boundary data (same as in run_single)
+    if length(rhom) > 0
+        assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
+    end
+    if length(rinflow) > 0 || length(routflow) > 0
+        assign_operator!(PD, InterpolateBoundaryData(
+            u, u!; bonus_quadorder, regions = union(rinflow, routflow), kwargs...))
+    end
+
+    ## the problem is linear (convection kernels would use the exact u! and ϱ! = M);
+    ## is_linear prevents spurious Newton iterations on the coupled saddle point system
+    sol, SC = solve(PD, FES; init = FEVector(FES; tags = [u, p]), maxiterations = 10,
+        target_residual, constant_matrix = true, return_config = true)
+
+    data["res_incompressible"] = residual(SC)
+
+    ## errors against exact solution (u = curl ξ / M, ϱ = M, p = 0 up to gauge)
+    ErrorIntegratorExact = ItemIntegrator(
+        exact_error_incompressible!(u!, ∇u!, Float64(M)), [id(u), grad(u)];
+        resultdim = 6, quadorder = 10, kwargs...)
+    error = evaluate(ErrorIntegratorExact, sol)
+    data["Error(L2,u_inc)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
+    data["Error(H1,u_inc)"]  = sqrt(sum(error[3, :]) + sum(error[4, :]) +
+                                 sum(error[5, :]) + sum(error[6, :]))
+
+    ## save data
+    data["incompressible_solution"]  = sol
+    data["unknown_u_incompressible"] = u
+    data["unknown_p_incompressible"] = p
+
+    if length(sol.entries) < 1e5
+        ExtendableFEM.plot([id(u)], sol; Plotter = UnicodePlots)
+    end
+
+    return data
+end
+
+## exact error kernel for the incompressible reference problem (exact u!, ∇u! minus discrete u, ∇u)
+function exact_error_incompressible!(u!, ∇u!, ϱval)
+    return function closure(result, args, qpinfo)
+        u!(view(result, 1:2), qpinfo)
+        ∇u!(view(result, 3:6), qpinfo)
+        view(result, 1:6) .-= view(args, 1:6)
+        return result .= result .^ 2
+    end
+end
+
+
+# ==============================================================================
 # Convection helper methods
 # ==============================================================================
 
@@ -543,7 +735,7 @@ end
 # Error computation
 # ==============================================================================
 
-function compute_errors(config; force_recompute = false, kwargs...)
+function compute_errors(config; force_recompute = false, compare_incompressible = true, kwargs...)
     fpath = filename(config) * ".jld2"
     @info "loading data from $fpath"
     data = wload(fpath)
@@ -579,6 +771,15 @@ function compute_errors(config; force_recompute = false, kwargs...)
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, kwargs...)
+    if compare_incompressible && (force_recompute || !haskey(data, "Error(H1,u_inc)"))
+        run_incompressible!(data; kwargs...)
+        sol_inc = data["incompressible_solution"]
+        diff_kernel = (result, input, qpinfo) -> (result .= (input[1] - input[3])^2 + (input[2] - input[4])^2)
+        DiffIntegrator = ItemIntegrator(diff_kernel, [id(1), id(2)]; quadorder = 2 * (data["order"]+1), kwargs...)
+        error_diff = evaluate(DiffIntegrator, [sol[u], sol_inc[1]])
+        data["Error(L2,u-u_inc)"] = sqrt(sum(view(error_diff, :)))
+        
+    end
     if force_recompute || !haskey(data, "Error(H1,u0)")
         @info "computing divergence-free part of u - u_h"
 
@@ -647,7 +848,7 @@ function compute_errors(config; force_recompute = false, kwargs...)
         order = data["order"]
         ErrorIntegratorExact = ItemIntegrator(
             exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)];
-            resultdim = 9, quadorder = 2 * (order + 1), kwargs...)
+            resultdim = 9, quadorder = 10, kwargs...)
         error = evaluate(ErrorIntegratorExact, sol)
         data["Error(L2,u)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
         data["Error(H1,u)"]  = sqrt(sum(error[3, :]) + sum(error[4, :]) +
@@ -778,61 +979,153 @@ end
 # Convergence history plot
 # ==============================================================================
 
-function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, force_recompute = false, kwargs...)
+"""
+    log_ticks(v; maxticks = 12)
+
+Powers of ten covering the positive finite values in `v` (first tick below
+the minimum, last tick above the maximum). If the range spans more than
+`maxticks` decades, every k-th decade is used and the top decade is kept.
+"""
+function log_ticks(v; maxticks = 12)
+    v = filter(x -> isfinite(x) && x > 0, collect(Float64, vec(v)))
+    isempty(v) && return [1.0e-2, 1.0, 1.0e+2]
+    lo = floor(Int, log10(minimum(v)))
+    hi = ceil(Int, log10(maximum(v)))
+    hi = max(hi, lo + 2)
+    step = max(1, ceil(Int, (hi - lo + 1) / maxticks))
+    ts = collect(lo:step:hi)
+    ts[end] == hi || push!(ts, hi)
+    return 10.0 .^ ts
+end
+
+"""
+    plot_convergencehistory(; nrefs = 1:6, quantities = :default, xquantity = :ndofs,
+        slopes = (1, 2), with_incompressible = false, kwargs...)
+
+Plots the convergence history of the compressible solver. The plotted curves
+are selected via `quantities`, a vector of symbols resolved against the
+`CONV_QUANTITIES` registry (e.g. `[:L2u, :H1u, :L2ϱ, :H1u0, :H1u1, :nits]`).
+`:default` gives `collect(DEFAULT_QUANTITIES)`, `:all` the whole registry.
+One-off quantities can be passed inline as NamedTuples with fields `name`,
+`data` (dict key or function `data -> value`) and `label`.
+
+Quantities with `incompressible = true` (`:H1u_inc`, `:L2u_inc`, `:L2u_diff`)
+trigger the incompressible reference solver `run_incompressible!` via
+`compute_errors` and are plotted against the DOF count of the incompressible
+system. For backward compatibility, `with_incompressible = true` (deprecated)
+appends them to the `:default` selection.
+
+`xquantity` selects the x-axis (`:ndofs` or `:h = ndofs^(-1/2)`), `slopes`
+adds reference lines O(h^k).
+"""
+function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, force_recompute = false,
+        quantities = :default, with_incompressible = false, xquantity = :ndofs, slopes = (1, 2), kwargs...)
+
+    ## resolve quantity selection against registry
+    if quantities === :default
+        qlist = collect(DEFAULT_QUANTITIES)
+        with_incompressible && append!(qlist, (:H1u_inc, :L2u_inc, :L2u_diff))
+    elseif quantities === :all
+        qlist = collect(keys(CONV_QUANTITIES))
+    else
+        qlist = collect(quantities)
+        if with_incompressible
+            @warn "with_incompressible = true is ignored when quantities are given explicitly; add e.g. :H1u_inc, :L2u_inc, :L2u_diff to quantities instead"
+        end
+    end
+    isempty(qlist) && error("quantities must not be empty")
+    unknown = [q for q in qlist if q isa Symbol && !haskey(CONV_QUANTITIES, q)]
+    isempty(unknown) || error("unknown quantities $unknown; available: $(collect(keys(CONV_QUANTITIES)))")
+    entries = [(q isa Symbol ? q : get(q, :name, :custom), q isa Symbol ? CONV_QUANTITIES[q] : q) for q in qlist]
+    for (name, e) in entries
+        hasproperty(e, :data) && hasproperty(e, :label) || error("quantity $name needs fields :data and :label")
+    end
+    needs_inc = any(get(e, :incompressible, false) for (_, e) in entries)
 
     data = load_data(; kwargs...)
     #@show data
-    Results = zeros(Float64, length(nrefs), 7)
-    NDoFs = zeros(Int, length(nrefs))
-    Residuals = zeros(Float64, length(nrefs), 2)
+    nl = length(nrefs)
+    vals = [zeros(Float64, nl) for _ in entries]
+    NDoFs = zeros(Int, nl)
+    NDoFsInc = zeros(Int, nl)
+    Residuals = zeros(Float64, nl, 2)
 
     for (j, lvl) in enumerate(nrefs)
         _data = deepcopy(data)
         _data["nrefs"] = lvl
         _data, ~ = safe_produce_or_load(_data; force = force)
         NDoFs[j] = _data["ndofs"]
-        _data = compute_errors(_data; force_recompute = force_recompute)
-        Results[j,1] = _data["Error(L2,u)"]
-        Results[j,2] = _data["Error(H1,u)"]
-        Results[j,3] = _data["Error(L2,ϱ)"]
-        Results[j,4] = _data["Error(L2,ϱu)"]
-        Results[j,5] = haskey(_data, "Error(H1,u0)") ? _data["Error(H1,u0)"] : NaN
-        Results[j,6] = haskey(_data, "Error(H1,u0)") ? sqrt(_data["Error(H1,u)"]^2 - _data["Error(H1,u0)"]^2) : NaN
-        Results[j,7] = _data["nits"]
+        _data = compute_errors(_data; force_recompute = force_recompute, compare_incompressible = needs_inc)
+
+        for (k, (_, e)) in enumerate(entries)
+            vals[k][j] = conv_value(e, _data)
+        end
+        if needs_inc
+            NDoFsInc[j] = haskey(_data, "incompressible_solution") ? length(_data["incompressible_solution"].entries) : NDoFs[j]
+        end
 
         if haskey(_data, "res_momentum")
-            Residuals[lvl,1] = _data["res_momentum"]
-            Residuals[lvl,2] = _data["res_continuity"]
+            Residuals[j,1] = _data["res_momentum"]
+            Residuals[j,2] = _data["res_continuity"]
         else
             @warn "residual information not found, consider rerunning"
-            Residuals[lvl,1] = 1e30
-            Residuals[lvl,2] = 1e30
+            Residuals[j,1] = 1e30
+            Residuals[j,2] = 1e30
         end
 
         @show Residuals
 
-        print_convergencehistory(NDoFs[:], Results[:,[1,2,5,3]]; X_to_h = X ->
-            X.^(-1/2), ylabels = [L"\lt{\bu - \uh}" , L"\lt{\nabla \(\bu - \uh\)}", L"\lt{\nabla \(\bu^0 - \uh^0\)}",
-            L"\lt{\varrho - \varrho_h}"], xlabel = "ndof", latex_mode = true)
+        ## console table of the first up to four selected quantities
+        sel = min(4, length(entries))
+        print_convergencehistory(NDoFs[:], hcat(vals[1:sel]...); X_to_h = X -> X.^(-1/2),
+            ylabels = [string(entries[k][2].label) for k in 1:sel],
+            xlabel = xquantity === :h ? "h" : "ndof", latex_mode = true)
     end
 
     ## plot
     #Plotter.rc("font", size=20)
-    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2]
-    xticks = [1e1,1e2,1e3,1e4,1e5,1e6,1e7,1e8]
-    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
-    Plotter.plot!(NDoFs, Results[:,1]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| \mathbf{u} - \mathbf{u}_h \,||")
-    Plotter.plot!(NDoFs, Results[:,2]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||")
-    Plotter.plot!(NDoFs, Results[:,3]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, ||")
-    Plotter.plot!(NDoFs, Results[:,4]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||")
-    Plotter.plot!(NDoFs, Results[:,5]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||")
-    Plotter.plot!(NDoFs, Results[:,7]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"nits")
-    Plotter.plot!(NDoFs, 0.5*NDoFs.^(-0.5); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h)")
-    Plotter.plot!(NDoFs, (1e+1)*NDoFs.^(-1.0); xscale = :log10, yscale = :log10, linestyle = :dash, linewidth = 3, color = :gray, label = L"\mathcal{O}(h^2)")
+    if !(xquantity in (:ndofs, :h))
+        error("xquantity must be :ndofs or :h")
+    end
+    hvals = NDoFs[:].^(-1/2)
+    xof = xquantity === :h ? hvals : Float64.(NDoFs[:])
 
-    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = "degrees of freedom",gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
+    ## collect all curves first, so that the axis ticks can cover the plotted data
+    ## (built via vcat instead of push! into a growing vector: quantity curves and slope
+    ## reference lines are different concrete NamedTuple types, which breaks push! growth)
+    series = vcat(
+        [ (; x = Float64.(get(e, :xinc, false) ? (xquantity === :h ? NDoFsInc[:].^(-1/2) : NDoFsInc[:]) : xof),
+            y = vals[k], label = e.label, style = get(e, :style, NamedTuple()))
+          for (k, (_, e)) in enumerate(entries) ],
+        [ (; x = xof, y = (m == 1 ? 0.5 : m == 2 ? 1e+1 : 1.0) .* hvals.^m,
+            label = m == 1 ? L"\mathcal{O}(h)" : latexstring("\\mathcal{O}(h^{$m})"),
+            style = (linestyle = :dash, color = :gray, marker = :none))
+          for m in slopes ],
+    )
+
+    ## axis ticks as powers of ten covering all plotted values
+    yticks = log_ticks(reduce(vcat, [s.y for s in series]))
+    xticks = log_ticks(reduce(vcat, [s.x for s in series]))
+    xlabelv = xquantity === :h ? "mesh size h" : "degrees of freedom"
+
+    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    for s in series
+        Plotter.plot!(s.x, s.y; xscale = :log10, yscale = :log10, linewidth = 3,
+            marker = :circle, markersize = 5, label = s.label, s.style...)
+    end
+
+    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = (xticks[1], xticks[end]), xlabel = xlabelv,gridalpha = 0.7,grid=true, background_color_legend = RGBA(1,1,1,0.7))
     ## save
-    Plotter.savefig(filename_plots(data))
+    prefix = if quantities === :default && !with_incompressible
+        ""
+    elseif quantities === :all
+        "_all_quantities"
+    elseif with_incompressible
+        "_with_incompressible"
+    else
+        "_" * join([string(n) for (n, _) in entries], "-")
+    end
+    Plotter.savefig(filename_plots(data; prefix))
 end
 
 # ==============================================================================

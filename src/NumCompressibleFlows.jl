@@ -37,14 +37,14 @@ export standard_gravity!
 export energy_kernel!
 export density_jump_stab_kernel!, velocity_jump_stab_kernel!
 export eos!
-export kernel_standardconvection_linearoperator!
+export kernel_standardconvection_linearoperator!, kernel_standardconvection_incompressible_linearoperator!
 export kernel_rotationform_linearoperator!, kernel_new_rotationform_linearoperator!
 export kernel_oseenconvection!
 export kernel_coriolis_linearoperator!
 export kernel_inflow!
 export kernel_outflow!
 export multiply_h_bilinear!, multiply_h_linear!
-export stokes_kernel
+export stokes_kernel!
 export div_projection!
 
 

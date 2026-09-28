@@ -115,18 +115,18 @@ function prepare_data(
     μ = 1,
     γ = 1,
     ufac = 1,
-   others_in_f  = true,
+    others_in_f  = true,
     pressure_in_f = false,
     λ = 0,
     convectiontype = NoConvection,
     coriolistype = NoCoriolis,
+    incompressible = isinf(c),
     kwargs...)
-
-    @info "Marwaaa Velocity is $TVT"
     
     ## get stream function and density for test types
+    ## in the incompressible limit (c = Inf) the density is the constant ϱ = M
     ξ = streamfunction(TVT;ufac = ufac, kwargs...)
-    ϱ = density(TDT; c = c, M = M, kwargs...) 
+    ϱ = incompressible ? M + 0*x : density(TDT; c = c, M = M, kwargs...)
     
     ## gradient of stream function
     ∇ξ = Symbolics.gradient(ξ, [x, y])
@@ -161,7 +161,6 @@ function prepare_data(
     else
         conv = [0*x, 0*x]
     end
-    @show conv 
 
     if coriolistype !== NoCoriolis
         ω = angular_velocity(coriolistype; kwargs...)
@@ -170,7 +169,15 @@ function prepare_data(
     
 
     # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
-    if pressure_in_f # Gradient_robustness 
+    f = [0*x, 0*x]
+    g = [0*x, 0*x]
+    if incompressible
+        # in the limit c → Inf the manufactured density is constant (ϱ = M) and
+        # all pressure-gradient terms ∇p = c∇ϱ (or c∇ϱ^γ, and ϱg = ∇p in the
+        # well-balanced variant) are pure gradients which are ignored here;
+        # they are absorbed by the pressure Lagrange multiplier of the
+        # incompressible problem and do not change the exact velocity
+    elseif pressure_in_f # Gradient_robustness 
         if EOSType <: IdealGasLaw && γ == 1
             f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p 
         elseif EOSType <: PowerLaw || γ > 1
@@ -178,11 +185,8 @@ function prepare_data(
                 γ = EOSType.parameters[1]
             end
             @assert γ > 1
-            f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p 
-            g = [0*x, 0*x]
+            f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p
         end
-        
-           
     else # Well_balancedness 
         if EOSType <: IdealGasLaw && γ == 1
             g = c * Symbolics.gradient(log(ϱ), [x, y]) # ϱg = ∇p  
@@ -192,13 +196,10 @@ function prepare_data(
             end
             @assert γ > 1
             g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # ϱg = ∇p 
-            f = [0*x, 0*x]
         end
-        
     end
 
     if others_in_f
-            
         f += - μ * Δu - λ*∇divu + conv   # f also has L(u) 
     else
         g += - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg also has L(u)
@@ -213,7 +214,7 @@ function prepare_data(
     ϱ!(result, qpinfo) = (result[1] = ϱ_eval(qpinfo.x[1], qpinfo.x[2]);)
     function kernel_gravity!(result, input, qpinfo)
         g_eval(result, qpinfo.x[1], qpinfo.x[2]) # qpinfo.x[1] is x and qpinfo.x[2] is y
-        return result .*= input[1] # what does it mean ?
+        return result .*= input[1] # multiply with discrete density ϱ
     end
     function kernel_rhs!(result, qpinfo)
         return f_eval(result, qpinfo.x[1], qpinfo.x[2])
