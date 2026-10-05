@@ -103,13 +103,25 @@ end
 
 
 ## kernel for ((β ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
-function kernel_oseenconvection!(β!, ϱ!)
+function kernel_oseenconvection_linearoperator!(β!, ϱ!)
     βval = zeros(Float64, 2)
     ϱval = zeros(Float64, 1)
     function closure(result, args, qpinfo)
         β!(βval, qpinfo)
         ϱ!(ϱval, qpinfo)
         ∇u = view(args, 1:4)
+        result[1] = ϱval[1] * dot(βval, view(∇u,1:2))
+        result[2] = ϱval[1] * dot(βval, view(∇u,3:4))
+        return nothing
+    end
+end
+
+function kernel_oseenconvection!(β!, ϱ!)
+    βval = zeros(Float64, 2)
+    ϱval = zeros(Float64, 1)
+    function closure(result, ∇u, qpinfo)
+        β!(βval, qpinfo)
+        ϱ!(ϱval, qpinfo)
         result[1] = ϱval[1] * dot(βval, view(∇u,1:2))
         result[2] = ϱval[1] * dot(βval, view(∇u,3:4))
         return nothing

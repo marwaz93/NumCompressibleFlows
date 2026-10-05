@@ -35,7 +35,6 @@ default_args = Dict(
     # problem parameters
     "μ" => 1,
     "λ" => 0,
-    "γ" => 1,
     "c" => 1,
     "M" => 1,
     # solving options
@@ -46,13 +45,16 @@ default_args = Dict(
     "pressure_stab" => 0,
     "bonus_quadorder" => 4,
     "maxsteps" => 8000,
+    "subiterations_momentum" => :auto,
     "target_residual" => 1.0e-11,
-    "reconstruct" => true,
+    "reconstruct" => :RT, # choose from :RT :BDM :none
     # data of the problem
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
     "convectiontype" => NoConvection,
     "upwindtype" => StandardUpwind,
+    "initial_values" => :interpolate, # choose from :interpolate, :stokes,
+    "no_continuity_update" => false,
     "coriolistype" => NoCoriolis,
     "eostype" => IdealGasLaw,
     "gridtype" => Mountain2D,
@@ -72,7 +74,8 @@ All key parameters are abbreviated and the result is prefixed with
 function filename(data; prefix = "data/projects/compressible_stokes_repeat/")
     μ = data["μ"]
     λ = data["λ"]
-    γ = data["γ"]
+    EOSType = data["eostype"]
+    γ = gamma(EOSType)
     c = data["c"]
     M = data["M"]
     τfac = data["τfac"]
@@ -131,6 +134,7 @@ Registry of convergence curves selectable by symbol in
 """
 const CONV_QUANTITIES = (
     L2u = (; data = "Error(L2,u)", label = L"|| \mathbf{u} - \mathbf{u}_h \,||"),
+    L2uR = (; data = "Error(L2,uR)", label = L"|| \mathbf{u} - \Pi\mathbf{u}_h \,||"),
     H1u = (; data = "Error(H1,u)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||"),
     L2ϱ = (; data = "Error(L2,ϱ)", label = L"|| {ϱ}-ϱ_h \, ||"),
     L2ϱu = (; data = "Error(L2,ϱu)", label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||"),
@@ -138,13 +142,13 @@ const CONV_QUANTITIES = (
     H1u1 = (; data = d -> sqrt(d["Error(H1,u)"]^2 - d["Error(H1,u0)"]^2),
               label = L"||  ∇( \mathbf{u}^1 - \mathbf{u}^1_h ) \,||"),
     nits = (; data = "nits", label = L"nits"),
-    H1u_inc = (; data = "Error(H1,u_inc)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h^\infty)\,||",
+    H1u_inc = (; data = "Error(H1,u_inc)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h^{inc})\,||",
                   incompressible = true, xinc = true,
                   style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :orange)),
-    L2u_inc = (; data = "Error(L2,u_inc)", label = L"|| \mathbf{u} - \mathbf{u}_h^\infty\,||",
+    L2u_inc = (; data = "Error(L2,u_inc)", label = L"|| \mathbf{u} - \mathbf{u}_h^{inc}\,||",
                   incompressible = true, xinc = true,
                   style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :purple)),
-    L2u_diff = (; data = "Error(L2,u-u_inc)", label = L"|| \mathbf{u}_h - \mathbf{u}_h^\infty\,||",
+    L2u_diff = (; data = "Error(L2,u-u_inc)", label = L"|| \mathbf{u}_h - \mathbf{u}_h^{inc}\,||",
                   incompressible = true, xinc = true,
                   style = (linestyle = :dashdot, marker = :xcross, markersize = 7, color = :green)),
     res_momentum = (; data = "res_momentum", label = "residual momentum"),
@@ -225,13 +229,15 @@ function run_incompressible!(data; kwargs...)
 
     ## define FE types and reconstruction operator (same velocity space as run_single)
     if order == 1
-        FETypes = [H1BR{2}, L2P0{1}]
-        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)
-        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u)
+        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+        div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
-        FETypes = [H1P2B{2, 2}, L2P1{1}]
-        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u)
-        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u)
+        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+        div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     else
         throw(ArgumentError("order must be 1 or 2"))
     end
@@ -253,6 +259,10 @@ function run_incompressible!(data; kwargs...)
         kernel_standardconvection_incompressible_linearoperator!, [id_u],
         [id_u, grad(u)]; quadorder = 2*order + 1,
         factor = -M, kwargs...))
+    elseif convectiontype == OseenConvection
+        assign_operator!(PD, BilinearOperator(
+        kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 1,
+        factor = 1, kwargs...))
     elseif !(convectiontype === NoConvection)
         error("convectiontype $(convectiontype) not yet supported by run_incompressible!")
     end
@@ -287,7 +297,7 @@ function run_incompressible!(data; kwargs...)
     ## save data
     data["incompressible_solution"]  = sol
     data["unknown_u_incompressible"] = u
-    data["unknown_p_incompressible"] = p
+    data["unknown_p_incompressible"] = p # not comparable to pressure from compressible problem
 
     if length(sol.entries) < 1e5
         ExtendableFEM.plot([id(u)], sol; Plotter = UnicodePlots)
@@ -326,7 +336,7 @@ end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{<:OseenConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
-    assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 1, factor = 1, kwargs...))
+    assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 2, store = true, factor = 1, kwargs...))
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
@@ -451,7 +461,8 @@ function run_single(data; kwargs...)
     # -- problem parameters --
     μ      = data["μ"]
     λ      = data["λ"]
-    γ      = data["γ"]
+    eostype= data["eostype"]
+    γ      = gamma(eostype)
     c      = data["c"]
     M      = data["M"]
     ufac   = data["ufac"]
@@ -465,13 +476,14 @@ function run_single(data; kwargs...)
     maxsteps       = data["maxsteps"]
     pressure_stab  = data["pressure_stab"]
     bonus_quadorder = data["bonus_quadorder"]
+    subiterations_momentum = data["subiterations_momentum"]
 
     # -- data of the problem --
     velocitytype   = data["velocitytype"]
     densitytype    = data["densitytype"]
-    eostype        = data["eostype"]
     gridtype       = data["gridtype"]
     pressure_in_f  = data["pressure_in_f"]
+    initial_values = data["initial_values"]
     others_in_f = data["others_in_f"]
     convectiontype = data["convectiontype"]
     upwindtype      = data["upwindtype"]
@@ -503,12 +515,14 @@ function run_single(data; kwargs...)
     ## define FE types and reconstruction operator
     if order == 1
         FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
-        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Identity}) : id(u)
-        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT0{2}, Divergence}) : div(u)
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+        div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
         FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
-        id_u    = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Identity}) : id(u)
-        div_u   = reconstruct ? apply(u, Reconstruct{HDIVRT1{2}, Divergence}) : div(u)
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+        div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     end
 
     ## define FE spaces
@@ -551,7 +565,7 @@ function run_single(data; kwargs...)
 
     ## boundary data and source terms
     assign_operator!(PD, LinearOperator(
-        eos!(eostype), [div(u)], [id(ϱ)]; factor = c, kwargs...))
+        eos!(eostype), [div(u)], [id(ϱ)]; factor = c, quadorder = order + 1, kwargs...))
     if length(rhom) > 0
         assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
     end
@@ -583,6 +597,8 @@ function run_single(data; kwargs...)
             stab_kernel!, [jump(id(ϱ))], [jump(id(ϱ))], [id(u)];
             entities = ON_IFACES, factor = pressure_stab, kwargs...))
     end
+
+    ## operators for implicit Euler time stepping
     assign_operator!(PDT, BilinearOperator(
         [id(ϱ)]; quadorder = 2 * (order - 1), factor = 1, store = true, kwargs...))
     assign_operator!(PDT, LinearOperator(
@@ -624,7 +640,7 @@ function run_single(data; kwargs...)
             assemble!(D, BilinearOperatorDG(
                 kernel_upwind2!, [jump(id(1))],
                 [this(id(1)), other(id(1))];
-                factor = 1, quadorder = order+1, entities = ON_IFACES, params = [fluxes]))
+                factor = 1, quadorder = order, entities = ON_IFACES, params = [fluxes]))
         elseif upwindtype === PointwiseUpwind
             ## computes u ⋅ n at quadrature points and use them for upwinding
             assemble!(D, BilinearOperatorDG(kernel_upwind!, [jump(id(1))],
@@ -657,7 +673,7 @@ function run_single(data; kwargs...)
             assemble!(D, BilinearOperatorDG(
                 density_jump_stab_kernel!(stab1[1], γ),
                 [jump(id(1))], [jump(id(1))], [average(id(1))];
-                factor = stab1[2]*2, entities = ON_IFACES, kwargs...), sol)
+                factor = stab1[2]*2, entities = ON_IFACES, bonus_quadorder = order, kwargs...), sol)
         end
 
         ## density mean stabilisation
@@ -674,7 +690,7 @@ function run_single(data; kwargs...)
     end
     assign_operator!(PDT, CallbackOperator(
         callback!, [u]; linearized_dependencies = [ϱ, ϱ],
-        modifies_rhs = false, kwargs...,
+        modifies_rhs = length(rinflow) + length(routflow) > 0, kwargs...,
         name = "upwind matrix D scaled by tau"))
 
     EnergyIntegrator = ItemIntegrator(
@@ -690,9 +706,17 @@ function run_single(data; kwargs...)
     sol  = FEVector(FES; tags = [u, ϱ, p])
     
     ## initial guess
-    fill!(sol[ϱ], M)
-    interpolate!(sol[u], u!)
-    interpolate!(sol[ϱ], ϱ!)
+    if initial_values == :stokes
+        fill!(sol[ϱ], M)
+        @info "starting with constant density (-> first momentum update is Stokes like solution)..."
+    elseif initial_values == :interpolate
+        @info "interpolating exact solution for initial values..."
+        interpolate!(sol[u], u!; bonus_quadorder)
+        interpolate!(sol[ϱ], ϱ!; bonus_quadorder)
+    else
+        @error "Choose a valid initial value option: :stokes or :interpolate"
+    end
+    
 
     D        = FEMatrix(FES[2], FES[2])
     brho     = FEVector(FES[2])
@@ -700,12 +724,21 @@ function run_single(data; kwargs...)
     rowsums  = zeros(Float64, size(D.entries, 1))
 
     M_start  = sum(evaluate(MassIntegrator, sol))
-    SC1 = SolverConfiguration(PD; init = sol, maxiterations = 1,
+    nonlinear_convection = !(convectiontype === NoConvection || convectiontype === OseenConvection)
+        maxiterations_momentum = subiterations_momentum == :auto ?  (nonlinear_convection ? 1 : 1) : subiterations_momentum
+    SC1 = SolverConfiguration(PD; init = sol, maxiterations = maxiterations_momentum,
         target_residual, constant_matrix = true, kwargs...)
     SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1,
         target_residual, kwargs...)
-    sol, nits = iterate_until_stationarity([SC1, SC2];
-        energy_integrator = EnergyIntegrator, maxsteps, init = sol, kwargs...)
+   
+   if data["no_continuity_update"]
+        @warn "continuity update is switched off, density stays at initial value" 
+        sol, nits = iterate_until_stationarity([SC1];
+            energy_integrator = EnergyIntegrator, maxsteps, init = sol, kwargs...)
+   else
+        sol, nits = iterate_until_stationarity([SC1, SC2];
+            energy_integrator = EnergyIntegrator, maxsteps, init = sol, kwargs...)
+   end
 
     ## calculate mass conservation
     Mend    = sum(evaluate(MassIntegrator, sol))
@@ -721,7 +754,7 @@ function run_single(data; kwargs...)
 
     # residuals printing
     data["res_momentum"] = residual(SC1)
-    data["res_continuity"] = residual(SC2)
+    data["res_continuity"] = data["no_continuity_update"] ? 0 : residual(SC2)
 
     ## plot unicode plot
     if length(sol.entries) < 1e5
@@ -742,7 +775,8 @@ function compute_errors(config; force_recompute = false, compare_incompressible 
     # problem parameters
     μ      = data["μ"]
     λ      = data["λ"]
-    γ      = data["γ"]
+    eostype= data["eostype"]
+    γ      = gamma(eostype)
     c      = data["c"]
     M      = data["M"]
     ufac   = data["ufac"]
@@ -758,6 +792,8 @@ function compute_errors(config; force_recompute = false, compare_incompressible 
     end
 
     # data of the problem
+    reconstruct    = data["reconstruct"]
+    order          = data["order"]
     velocitytype   = data["velocitytype"]
     densitytype    = data["densitytype"]
     eostype        = data["eostype"]
@@ -771,8 +807,10 @@ function compute_errors(config; force_recompute = false, compare_incompressible 
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, kwargs...)
-    if compare_incompressible && (force_recompute || !haskey(data, "Error(H1,u_inc)"))
-        run_incompressible!(data; kwargs...)
+    if compare_incompressible && (force_recompute || !haskey(data, "Error(L2,u-u_inc)"))
+        if !haskey(data, "incompressible_solution")
+            run_incompressible!(data; kwargs...)
+        end
         sol_inc = data["incompressible_solution"]
         diff_kernel = (result, input, qpinfo) -> (result .= (input[1] - input[3])^2 + (input[2] - input[4])^2)
         DiffIntegrator = ItemIntegrator(diff_kernel, [id(1), id(2)]; quadorder = 2 * (data["order"]+1), kwargs...)
@@ -855,6 +893,24 @@ function compute_errors(config; force_recompute = false, compare_incompressible 
                                      sum(error[5, :]) + sum(error[6, :]))
         data["Error(L2,ϱ)"]  = sqrt(sum(error[7, :]))
         data["Error(L2,ϱu)"] = sqrt(sum(error[8, :]) + sum(error[9, :]))
+
+        @assert reconstruct in [:none, :RT, :BDM]
+        if data["reconstruct"] !== :none
+            if order == 1
+                ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+                id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+                div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
+            elseif order == 2
+                ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+                id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
+                div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
+            end
+            ErrorIntegratorExactReconstruct = ItemIntegrator(
+                exact_error!(u!, ∇u!, ϱ!), [id_u, grad(u), id(ϱ)];
+                resultdim = 9, quadorder = 10, kwargs...)
+            error = evaluate(ErrorIntegratorExactReconstruct, sol)
+            data["Error(L2,uR)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
+        end
     else
         @info "skipping error calculation (already computed)"
     end
@@ -897,7 +953,8 @@ path string ending in `.png`.
 function filename_plots(data; prefix = "", free_parameter = "")
     μ = data["μ"]
     c = data["c"]
-    γ = data["γ"]
+    EOSType = data["eostype"]
+    γ = gamma(EOSType)
     stab1 = data["stab1"]
     stab2 = data["stab2"]
     ϵ = 1 - stab1[1]
@@ -1021,6 +1078,7 @@ adds reference lines O(h^k).
 function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, force_recompute = false,
         quantities = :default, with_incompressible = false, xquantity = :ndofs, slopes = (1, 2), kwargs...)
 
+    @info "Plotting convergence history for nrefs = $nrefs, quantities = $quantities, xquantity = $xquantity, slopes = $slopes..."
     ## resolve quantity selection against registry
     if quantities === :default
         qlist = collect(DEFAULT_QUANTITIES)

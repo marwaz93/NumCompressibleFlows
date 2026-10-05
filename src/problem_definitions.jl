@@ -77,6 +77,9 @@ function grid(::Type{<:UniformUnitSquare}; nref = 1, kwargs...)
     return grid_builder(nref)
 end
 
+gamma(::Type{<:PowerLaw{γ}}) where {γ} = γ
+gamma(::Type{<:IdealGasLaw}) = 1
+
 streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0*x
 streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
@@ -113,7 +116,6 @@ function prepare_data(
     M = 1,
     c = 1,
     μ = 1,
-    γ = 1,
     ufac = 1,
     others_in_f  = true,
     pressure_in_f = false,
@@ -125,6 +127,7 @@ function prepare_data(
     
     ## get stream function and density for test types
     ## in the incompressible limit (c = Inf) the density is the constant ϱ = M
+    γ = gamma(EOSType)
     ξ = streamfunction(TVT;ufac = ufac, kwargs...)
     ϱ = incompressible ? M + 0*x : density(TDT; c = c, M = M, kwargs...)
     
@@ -157,7 +160,7 @@ function prepare_data(
     ## for the convection term ϱ(u ⋅∇)u
     if convectiontype !== NoConvection
         conv = [ u[1] * ∇u[1, 1] + u[2] * ∇u[1, 2],
-                 u[1] * ∇u[2, 1] +  u[2] * ∇u[2, 2] ] .* ϱ
+                 u[1] * ∇u[2, 1] + u[2] * ∇u[2, 2] ] .* ϱ
     else
         conv = [0*x, 0*x]
     end
@@ -179,7 +182,9 @@ function prepare_data(
         # incompressible problem and do not change the exact velocity
     elseif pressure_in_f # Gradient_robustness 
         if EOSType <: IdealGasLaw && γ == 1
-            f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p 
+            f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p
+        elseif EOSType <: IdealGasLaw && γ > 1
+            @error "IdealGasLaw with γ > 1 is not supported, please change to PowerLaw{γ}."
         elseif EOSType <: PowerLaw || γ > 1
             if EOSType <: PowerLaw
                 γ = EOSType.parameters[1]
