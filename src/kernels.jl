@@ -214,6 +214,17 @@ function exact_error!(u!, ∇u!, ϱ!)
     end
 end
 
+## exact error kernel for the incompressible reference problem
+## (exact u!, ∇u! minus discrete u, ∇u)
+function exact_error_incompressible!(u!, ∇u!, ϱval)
+    return function closure(result, args, qpinfo)
+        u!(view(result, 1:2), qpinfo)
+        ∇u!(view(result, 3:6), qpinfo)
+        view(result, 1:6) .-= view(args, 1:6)
+        return result .= result .^ 2
+    end
+end
+
 ## kernel for gravity term in testcase 1
 function standard_gravity!(result, ϱ, qpinfo)
     result[1] = 0

@@ -5,7 +5,7 @@ using ExtendableGrids
 using Triangulate
 using SimplexGridFactory
 using GridVisualize
-using Symbolics
+import Symbolics
 using LinearAlgebra
 
 abstract type TestDensity end
