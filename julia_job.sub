@@ -1,0 +1,14 @@
+executable = run_julia.sh
+
+request_cpus   = 1
+request_memory = 10GB
+
+requirements = (TARGET.TotalGPUs == 0)
+
+output = out/output_$(Process).out
+log    = log/output_$(Process).log
+error  = err/output_$(Process).err
+
+arguments = $(arguments)
+
+queue arguments from parameters.txt
