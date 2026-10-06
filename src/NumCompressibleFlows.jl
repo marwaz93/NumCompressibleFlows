@@ -40,7 +40,7 @@ include("kernels.jl")
 export stab_kernel!
 export kernel_continuity!
 export kernel_upwind!, kernel_upwind2!, kernel_upwind_convection!, kernel_upwind_newconvection!
-export exact_error!, exact_error_incompressible!
+export exact_error!, exact_error_incompressible!, div_error!
 export standard_gravity!
 export energy_kernel!
 export density_jump_stab_kernel!, velocity_jump_stab_kernel!

@@ -18,6 +18,8 @@ const CONV_QUANTITIES = (
     H1u = (; data = "Error(H1,u)", label = L"|| ∇(\mathbf{u} - \mathbf{u}_h)\,||"),                     # H1 error of velocity
     L2ϱ = (; data = "Error(L2,ϱ)", label = L"|| {ϱ}-ϱ_h \, ||"),                                         # L2 error of density
     L2ϱu = (; data = "Error(L2,ϱu)", label = L"|| {ϱ\mathbf{u}}-ϱ_h \mathbf{u}_h \, ||"),                # L2 error of momentum
+    L2divu = (; data = "Error(L2,div u)", label = L"|| \mathrm{div}(\mathbf{u} - \mathbf{u}_h) \,||"),  # L2 error of divergence
+    L2divuR = (; data = "Error(L2,div uR)", label = L"|| \mathrm{div}(\mathbf{u} - \Pi\mathbf{u}_h) \,||"), # L2 error of divergence of reconstruction
     H1u0 = (; data = "Error(H1,u0)", label = L"||  ∇( \mathbf{u}^0 - \mathbf{u}^0_h ) \,||"),           # H1 error of div-free part
     H1u1 = (; data = d -> sqrt(d["Error(H1,u)"]^2 - d["Error(H1,u0)"]^2),                               # H1 error of curl-free part
               label = L"||  ∇( \mathbf{u}^1 - \mathbf{u}^1_h ) \,||"),
@@ -35,7 +37,7 @@ const CONV_QUANTITIES = (
     res_continuity = (; data = "res_continuity", label = "residual continuity"),                        # residual of continuity equation
 )
 
-const DEFAULT_QUANTITIES = (:L2u, :H1u, :L2ϱ, :L2ϱu, :H1u0)
+const DEFAULT_QUANTITIES = (:L2u, :H1u, :L2ϱ, :L2ϱu, :H1u0, :L2divu)
 
 ## value of a CONV_QUANTITIES entry for a given level's data dict
 function conv_value(entry, d)
@@ -173,7 +175,7 @@ end
 
 Plots the convergence history of the compressible solver. The plotted curves
 are selected via `quantities`, a vector of symbols resolved against the
-`CONV_QUANTITIES` registry (e.g. `[:L2u, :H1u, :L2ϱ, :H1u0, :H1u1, :nits]`).
+`CONV_QUANTITIES` registry (e.g. `[:L2u, :H1u, :L2ϱ, :H1u0, :H1u1, :L2divu, :nits]`).
 `:default` gives `collect(DEFAULT_QUANTITIES)`, `:all` the whole registry.
 One-off quantities can be passed inline as NamedTuples with fields `name`,
 `data` (dict key or function `data -> value`) and `label`.

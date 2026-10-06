@@ -89,6 +89,7 @@ function setup_study!(studyname; plot_folders = [""])
         nrefs = data["nrefs"]
         order = data["order"]
         reconstruct = data["reconstruct"]
+        target_residual = data["target_residual"]
 
         # Abbreviate type names for savename
         vtype = replace(string(data["velocitytype"]), "Velocity" => "V")
@@ -103,14 +104,14 @@ function setup_study!(studyname; plot_folders = [""])
         convectiontype = data["convectiontype"]
 
         ## ordered by relevance: problem definition, physics parameters,
-        ## discretization, numerical factors, refinement level (savename keeps
-        ## the order of a NamedTuple when sort = false)
+        ## discretization, numerical factors, solver tolerance, refinement
+        ## level (savename keeps the order of a NamedTuple when sort = false)
         essential = (vtype = vtype, dtype = dtype, etype = etype, gtype = gtype,
                      ctype = ctype, cortype = cortype, pressure_in_f = pressure_in_f,
                      stab1 = stab1, stab2 = stab2,
                      μ = μ, λ = λ, c = c, M = M,
                      order = order, reconstruct = reconstruct,
-                     τfac = τfac, ufac = ufac,
+                     τfac = τfac, ufac = ufac, tres = target_residual,
                      nrefs = nrefs)
 
         sname = savename(essential; sort = false,

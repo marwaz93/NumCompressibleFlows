@@ -2,7 +2,8 @@
     compute_errors!(data; force_recompute = false, compare_incompressible = true, kwargs...)
 
 Compute and store error norms (`Error(L2,u)`, `Error(H1,u)`, `Error(L2,ϱ)`,
-`Error(L2,ϱu)`, `Error(L2,uR)`, `Error(H1,u0)`) in the given dict of a solved
+`Error(L2,ϱu)`, `Error(L2,uR)`, `Error(H1,u0)`, `Error(L2,div u)`,
+`Error(L2,div uR)`) in the given dict of a solved
 configuration and optionally compare against the incompressible reference
 solution (`run_incompressible!`). The dict must contain a `solution` key, e.g.
 as returned by `run_single` or by loading the corresponding JLD2 file.
@@ -89,7 +90,7 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
         assign_operator!(PDSP_u, BilinearOperator([grad(uzero)]; factor = 1, store = true, kwargs...))
         assign_operator!(PDSP_u, BilinearOperator([div(uzero)]; store = true, factor = β, kwargs...))
         assign_operator!(PDSP_u, LinearOperator([grad(uzero)], [grad(u)]; factor = -1, kwargs...))
-        assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; kwargs...))
+        assign_operator!(PDSP_u, LinearOperator(∇u!, [grad(uzero)]; bonus_quadorder = 4, kwargs...))
         assign_operator!(PDSP_u, LinearOperator([div(uzero)], [id(pzero)]; factor = 1, kwargs...))
         assign_operator!(PDSP_u, HomogeneousBoundaryData(uzero; regions = 1:4, kwargs...))
 
@@ -131,6 +132,11 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
         data["Error(L2,ϱ)"]  = sqrt(sum(error[7, :]))
         data["Error(L2,ϱu)"] = sqrt(sum(error[8, :]) + sum(error[9, :]))
 
+        ## L2 error of the divergence: exact div u (from ∇u!) minus div u_h
+        DivErrorIntegrator = ItemIntegrator(
+            div_error!(u!, ∇u!), [div(u)]; resultdim = 1, quadorder = 10, kwargs...)
+        data["Error(L2,div u)"] = sqrt(sum(evaluate(DivErrorIntegrator, sol)))
+
         @assert reconstruct in [:none, :RT, :BDM]
         if data["reconstruct"] !== :none
             if order == 1
@@ -147,6 +153,10 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
                 resultdim = 9, quadorder = 10, kwargs...)
             error = evaluate(ErrorIntegratorExactReconstruct, sol)
             data["Error(L2,uR)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
+            ## L2 error of the divergence of the H(div)-conforming reconstruction
+            DivErrorIntegratorReconstruct = ItemIntegrator(
+                div_error!(u!, ∇u!), [div_u]; resultdim = 1, quadorder = 10, kwargs...)
+            data["Error(L2,div uR)"] = sqrt(sum(evaluate(DivErrorIntegratorReconstruct, sol)))
         end
     else
         @info "skipping error calculation (already computed)"

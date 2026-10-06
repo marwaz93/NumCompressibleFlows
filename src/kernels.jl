@@ -225,6 +225,18 @@ function exact_error_incompressible!(u!, ∇u!, ϱval)
     end
 end
 
+## kernel for exact divergence error calculation
+## (exact div u from ∇u! minus discrete divergence, e.g. from a [div(u)]
+##  or [apply(u, Reconstruct{..., Divergence})] operator)
+function div_error!(u!, ∇u!)
+    ∇uval = zeros(Float64, 4)
+    return function closure(result, u, qpinfo)
+        ∇u!(∇uval, qpinfo) # layout: [∂x u1, ∂y u1, ∂x u2, ∂y u2]
+        result[1] = (∇uval[1] + ∇uval[4] - u[1])^2
+        return result
+    end
+end
+
 ## kernel for gravity term in testcase 1
 function standard_gravity!(result, ϱ, qpinfo)
     result[1] = 0
