@@ -103,13 +103,25 @@ end
 
 
 ## kernel for ((β ⋅ ∇)u, ∇v) ON_CELLS in momentum balance
-function kernel_oseenconvection!(β!, ϱ!)
+function kernel_oseenconvection_linearoperator!(β!, ϱ!)
     βval = zeros(Float64, 2)
     ϱval = zeros(Float64, 1)
     function closure(result, args, qpinfo)
         β!(βval, qpinfo)
         ϱ!(ϱval, qpinfo)
         ∇u = view(args, 1:4)
+        result[1] = ϱval[1] * dot(βval, view(∇u,1:2))
+        result[2] = ϱval[1] * dot(βval, view(∇u,3:4))
+        return nothing
+    end
+end
+
+function kernel_oseenconvection!(β!, ϱ!)
+    βval = zeros(Float64, 2)
+    ϱval = zeros(Float64, 1)
+    function closure(result, ∇u, qpinfo)
+        β!(βval, qpinfo)
+        ϱ!(ϱval, qpinfo)
         result[1] = ϱval[1] * dot(βval, view(∇u,1:2))
         result[2] = ϱval[1] * dot(βval, view(∇u,3:4))
         return nothing
@@ -199,6 +211,29 @@ function exact_error!(u!, ∇u!, ϱ!)
         result[8] -= u[1] * u[7]
         result[9] -= u[2] * u[7]
         return result .= result .^ 2
+    end
+end
+
+## exact error kernel for the incompressible reference problem
+## (exact u!, ∇u! minus discrete u, ∇u)
+function exact_error_incompressible!(u!, ∇u!, ϱval)
+    return function closure(result, args, qpinfo)
+        u!(view(result, 1:2), qpinfo)
+        ∇u!(view(result, 3:6), qpinfo)
+        view(result, 1:6) .-= view(args, 1:6)
+        return result .= result .^ 2
+    end
+end
+
+## kernel for exact divergence error calculation
+## (exact div u from ∇u! minus discrete divergence, e.g. from a [div(u)]
+##  or [apply(u, Reconstruct{..., Divergence})] operator)
+function div_error!(u!, ∇u!)
+    ∇uval = zeros(Float64, 4)
+    return function closure(result, u, qpinfo)
+        ∇u!(∇uval, qpinfo) # layout: [∂x u1, ∂y u1, ∂x u2, ∂y u2]
+        result[1] = (∇uval[1] + ∇uval[4] - u[1])^2
+        return result
     end
 end
 
