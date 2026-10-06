@@ -210,6 +210,10 @@ function prepare_data(
         g += - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg also has L(u)
     end
 
+    @info "conv [$convectiontype] = ", conv
+    @info "f = ", f
+    @info "g = ", g
+
     ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
     u_eval = build_function(u, x, y, expression = Val{false})[2]
     ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})[2]

@@ -375,7 +375,7 @@ function run_single(data; kwargs...)
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, τfac, nrefs, kwargs...)
+                     ufac, convectiontype, τfac, nrefs, kwargs...)
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
 
     M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
