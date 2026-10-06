@@ -266,7 +266,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                 assemble!(bconv, LinearOperatorDG(
                     velocity_jump_stab_kernel!(stab1[1], 3.0),
                     [jump(id(1))], [jump(id(2)), average(id(3))];
-                    factor = stab1[2]*2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
+                    factor = stab1[2]/2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
             end
             
             
@@ -314,7 +314,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                 assemble!(bconv, LinearOperatorDG(
                     velocity_jump_stab_kernel!(stab1[1], 3.0),
                     [jump(id(1))], [jump(id(2)), average(id(3))];
-                    factor = stab1[2]*2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
+                    factor = stab1[2]/2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
             end
 
             b .+= bconv.entries
@@ -548,7 +548,7 @@ function run_single(data; kwargs...)
             assemble!(D, BilinearOperatorDG(
                 density_jump_stab_kernel!(stab1[1], γ),
                 [jump(id(1))], [jump(id(1))], [average(id(1))];
-                factor = stab1[2]*2, entities = ON_IFACES, bonus_quadorder = order, kwargs...), sol)
+                factor = stab1[2], entities = ON_IFACES, bonus_quadorder = order, kwargs...), sol)
         end
 
         ## density mean stabilisation
