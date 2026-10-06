@@ -14,7 +14,7 @@ using DrWatson
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, RigidBodyRotation
+export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation
 export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
 export EOSType, IdealGasLaw, PowerLaw
 export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm, KarperConvection, NewConvection

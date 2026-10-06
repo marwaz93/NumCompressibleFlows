@@ -17,6 +17,7 @@ abstract type ExponentialDensityRBR <: TestDensity end
 abstract type TestVelocity end
 abstract type ZeroVelocity <: TestVelocity end
 abstract type ConstantVelocity <: TestVelocity end
+abstract type LinearVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
 abstract type RigidBodyRotation <: TestVelocity end
 
@@ -79,6 +80,7 @@ end
 
 streamfunction(::Type{<:ZeroVelocity};ufac = 1, kwargs...) = 0*x
 streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
+streamfunction(::Type{<:LinearVelocity};ufac = 1, kwargs...) = -  ufac * x * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2)
 
@@ -87,10 +89,12 @@ already_divfree(::Type{<:RigidBodyRotation}) = true
 
 inflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 inflow_regions(::Type{<:ConstantVelocity}, gridtype) = [1,3,4]
+inflow_regions(::Type{<:LinearVelocity}, gridtype) = [3]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
 outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 outflow_regions(::Type{<:ConstantVelocity}, gridtype) = [2]
+outflow_regions(::Type{<:LinearVelocity}, gridtype) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 
