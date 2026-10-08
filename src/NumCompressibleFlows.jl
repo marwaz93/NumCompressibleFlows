@@ -9,6 +9,13 @@ using Symbolics: Symbolics, @variables, build_function
 using LinearAlgebra
 #using Test #hide
 using DrWatson
+using UnicodePlots
+using Term
+using Plots
+using LaTeXStrings
+using Latexify
+using Colors
+using ColorTypes
 
 # global Symbolics variables for definition of exact solutions
 @variables x y z t
@@ -23,7 +30,8 @@ export CoriolisType, NoCoriolis, BetaPlaneApproximation
 export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
 export inflow_regions, outflow_regions
 export grid
-export prepare_data, filename, run_single
+export prepare_data, run_single
+export default_args, load_data, run_incompressible!
 
 
 include("utilities.jl")
@@ -32,7 +40,7 @@ include("kernels.jl")
 export stab_kernel!
 export kernel_continuity!
 export kernel_upwind!, kernel_upwind2!, kernel_upwind_convection!, kernel_upwind_newconvection!
-export exact_error!
+export exact_error!, exact_error_incompressible!
 export standard_gravity!
 export energy_kernel!
 export density_jump_stab_kernel!, velocity_jump_stab_kernel!
@@ -48,8 +56,18 @@ export stokes_kernel!
 export div_projection!
 
 
-#include("compressible_stokes.jl")
-#export load_testcase_data, filename, run_single
+include("compressible_stokes.jl")
+
+include("postprocessing.jl")
+export compute_errors!
+
+include("plotting.jl")
+export CONV_QUANTITIES, DEFAULT_QUANTITIES
+export setup_pipeline!, log_ticks, conv_value
+export plot_single, plot_convergencehistory
+export plot_parameter_study_viscosity, plot_parameter_study_gamma, plot_parameter_study_mach_number,
+    plot_parameter_study_mach_viscosity, plot_parameter_study_stab1, plot_parameter_study_stab2,
+    plot_parameter_study_stab1_reconstruction, plot_parameter_study_alpha_reconstruction
 
 ## problem: loading and saving grids leads to ElementGeometries -> DataType conversion (by DrWarson/JLD2?) which has to be reverted
 ## after loading (until this is fixed ina more elegant way)
