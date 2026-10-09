@@ -62,12 +62,10 @@ include("postprocessing.jl")
 export compute_errors!
 
 include("plotting.jl")
-export CONV_QUANTITIES, DEFAULT_QUANTITIES
-export setup_pipeline!, log_ticks, conv_value
-export plot_single, plot_convergencehistory
-export plot_parameter_study_viscosity, plot_parameter_study_gamma, plot_parameter_study_mach_number,
-    plot_parameter_study_mach_viscosity, plot_parameter_study_stab1, plot_parameter_study_stab2,
-    plot_parameter_study_stab1_reconstruction, plot_parameter_study_alpha_reconstruction
+export CONV_QUANTITIES, DEFAULT_QUANTITIES, DEFAULT_SWEEP_QUANTITIES
+export SWEEP_CHOICES, set_sweep_choices!, reset_sweep_choices!
+export setup_pipeline!, log_ticks, conv_value, resolve_quantities, short_name
+export plot_single, plot_convergencehistory, plot_parameter_study
 
 ## problem: loading and saving grids leads to ElementGeometries -> DataType conversion (by DrWarson/JLD2?) which has to be reverted
 ## after loading (until this is fixed ina more elegant way)

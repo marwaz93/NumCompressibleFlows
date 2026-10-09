@@ -38,6 +38,60 @@ const CONV_QUANTITIES = (
 )
 
 const DEFAULT_QUANTITIES = (:L2u, :H1u, :L2ϱ, :L2ϱu, :H1u0, :L2divu)
+const DEFAULT_SWEEP_QUANTITIES = (:L2u, :H1u, :L2ϱ)
+
+## built-in default sweep values for categorical config fields of
+## plot_parameter_study (see SWEEP_CHOICES for the mutable current setting)
+const DEFAULT_SWEEP_CHOICES = (
+    convectiontype = (StandardConvection, OseenConvection, KarperConvection, NewConvection),
+    upwindtype = (StandardUpwind, PointwiseUpwind),
+    reconstruct = (:RT, :BDM, :none),
+    coriolistype = (NoCoriolis, BetaPlaneApproximation),
+    eostype = (IdealGasLaw, PowerLaw{1.4}),
+)
+
+## current default sweep values per config field of plot_parameter_study;
+## modify with set_sweep_choices! / reset_sweep_choices! (or directly)
+const SWEEP_CHOICES = Dict{Symbol, Any}(k => v for (k, v) in pairs(DEFAULT_SWEEP_CHOICES))
+
+"""
+    set_sweep_choices!(; param = values...)
+
+Set the default sweep `values` that `plot_parameter_study` uses for
+categorical config fields, e.g.
+
+    set_sweep_choices!(convectiontype = (OseenConvection, NewConvection),
+                       reconstruct = (:RT, :BDM))
+
+Each `param` must be a config dict key (a key of `default_args`, except
+`:nrefs`); the values are stored as a tuple, so vectors and tuples are both
+accepted. New fields can be added this way too. See also
+`reset_sweep_choices!`; `SWEEP_CHOICES` may also be edited directly.
+"""
+function set_sweep_choices!(; kwargs...)
+    isempty(kwargs) && error("usage: set_sweep_choices!(param = values, ...)")
+    for (param, values) in pairs(kwargs)
+        haskey(default_args, String(param)) || error("unknown config field :$param; choose one of: $(sort(collect(keys(default_args))))")
+        param === :nrefs && error(":nrefs is the x-axis of plot_parameter_study, it cannot be swept")
+        vals = values isa Union{AbstractVector, Tuple} ? Tuple(values) : (values,)
+        isempty(vals) && error("sweep choices for :$param must not be empty")
+        SWEEP_CHOICES[param] = vals
+    end
+    return SWEEP_CHOICES
+end
+
+"""
+    reset_sweep_choices!()
+
+Restore the built-in defaults of `SWEEP_CHOICES`.
+"""
+function reset_sweep_choices!()
+    empty!(SWEEP_CHOICES)
+    for (param, values) in pairs(DEFAULT_SWEEP_CHOICES)
+        SWEEP_CHOICES[param] = values
+    end
+    return SWEEP_CHOICES
+end
 
 ## value of a CONV_QUANTITIES entry for a given level's data dict
 function conv_value(entry, d)
@@ -50,6 +104,43 @@ function conv_value(entry, d)
             return NaN
         end
     end
+end
+
+## short display/file name of a sweep value (module qualification removed,
+## common type suffixes abbreviated)
+short_name(v) = replace(string(v), "NumCompressibleFlows." => "",
+    "UnstructuredUnitSquare" => "SquareUnstruct", "UniformUnitSquare" => "SquareUniform",
+    "UnitSquare" => "Square", "Convection" => "Conv", "Upwind" => "Upw",
+    "Coriolis" => "Cor", "Approximation" => "")
+
+"""
+    resolve_quantities(quantities; with_incompressible = false)
+
+Resolve a quantity selection against `CONV_QUANTITIES`: a vector of symbols
+(`:default` = `DEFAULT_QUANTITIES`, `:all` = whole registry), or inline
+NamedTuples with fields `name`, `data` and `label`. Returns a vector of
+`(name, entry)` pairs.
+"""
+function resolve_quantities(quantities; with_incompressible = false)
+    if quantities === :default
+        qlist = collect(DEFAULT_QUANTITIES)
+        with_incompressible && append!(qlist, (:H1u_inc, :L2u_inc, :L2u_diff))
+    elseif quantities === :all
+        qlist = collect(keys(CONV_QUANTITIES))
+    else
+        qlist = collect(quantities)
+        if with_incompressible
+            @warn "with_incompressible = true is ignored when quantities are given explicitly; add e.g. :H1u_inc, :L2u_inc, :L2u_diff to quantities instead"
+        end
+    end
+    isempty(qlist) && error("quantities must not be empty")
+    unknown = [q for q in qlist if q isa Symbol && !haskey(CONV_QUANTITIES, q)]
+    isempty(unknown) || error("unknown quantities $unknown; available: $(collect(keys(CONV_QUANTITIES)))")
+    entries = [(q isa Symbol ? q : get(q, :name, :custom), q isa Symbol ? CONV_QUANTITIES[q] : q) for q in qlist]
+    for (name, e) in entries
+        hasproperty(e, :data) && hasproperty(e, :label) || error("quantity $name needs fields :data and :label")
+    end
+    return entries
 end
 
 # ==============================================================================
@@ -194,24 +285,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
     @info "Plotting convergence history for nrefs = $nrefs, quantities = $quantities, xquantity = $xquantity, slopes = $slopes..."
     ## resolve quantity selection against registry
-    if quantities === :default
-        qlist = collect(DEFAULT_QUANTITIES)
-        with_incompressible && append!(qlist, (:H1u_inc, :L2u_inc, :L2u_diff))
-    elseif quantities === :all
-        qlist = collect(keys(CONV_QUANTITIES))
-    else
-        qlist = collect(quantities)
-        if with_incompressible
-            @warn "with_incompressible = true is ignored when quantities are given explicitly; add e.g. :H1u_inc, :L2u_inc, :L2u_diff to quantities instead"
-        end
-    end
-    isempty(qlist) && error("quantities must not be empty")
-    unknown = [q for q in qlist if q isa Symbol && !haskey(CONV_QUANTITIES, q)]
-    isempty(unknown) || error("unknown quantities $unknown; available: $(collect(keys(CONV_QUANTITIES)))")
-    entries = [(q isa Symbol ? q : get(q, :name, :custom), q isa Symbol ? CONV_QUANTITIES[q] : q) for q in qlist]
-    for (name, e) in entries
-        hasproperty(e, :data) && hasproperty(e, :label) || error("quantity $name needs fields :data and :label")
-    end
+    entries = resolve_quantities(quantities; with_incompressible)
     needs_inc = any(get(e, :incompressible, false) for (_, e) in entries)
 
     data = load_data(; kwargs...)
@@ -317,378 +391,204 @@ end
 # Parameter study plots
 # ==============================================================================
 
-function plot_parameter_study_viscosity(; nrefs = [3], μ = [1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,100,1000], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    μ = μ isa AbstractVector ? μ : [μ]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(μ), length(nrefs))
-    H1u = zeros(Float64, length(μ), length(nrefs))
-    L2ϱ = zeros(Float64, length(μ), length(nrefs))
+## per-sweep-value colors, per-quantity linestyles and markers (cycled as needed)
+const STUDY_COLORS = [colorant"#386cb0", colorant"#e6550d", colorant"#31a354", colorant"#756bb1",
+                      colorant"#a6761d", colorant"#7b3294", colorant"#525252", colorant"#e7298a"]
+const STUDY_LINESTYLES = (:solid, :dashdot, :dot, :dash, :dashdotdot)
+const STUDY_MARKERS = (:circle, :rect, :diamond, :utriangle, :dtriangle, :pentagon)
 
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(μ)
-            data["μ"] = μ[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+"""
+    plot_parameter_study(; param = :convectiontype, values = nothing, nrefs = 1:4,
+        quantities = DEFAULT_SWEEP_QUANTITIES, xquantity = :ndofs, slopes = (1, 2),
+        Plotter = Plots, force = false, force_recompute = false, kwargs...)
+
+Compare convergence histories of several configurations, one per value of a
+single entry of the config dict: `param` names the key (any key of
+`default_args`, except `:nrefs`), `values` the list of values to compare, e.g.
+
+    plot_parameter_study(param = :convectiontype,
+        values = [NewConvection, OseenConvection, StandardConvection, KarperConvection],
+        quantities = [:L2u, :H1u])
+
+For categorical fields (`convectiontype`, `upwindtype`, `reconstruct`,
+`coriolistype`, `eostype`) `values` defaults to the mutable `SWEEP_CHOICES`
+registry (change it with `set_sweep_choices!`); for numeric fields (e.g.
+`param = :μ`) a `values` vector is required. Every
+keyword argument in `kwargs` is study configuration passed to `load_data`
+(just like in `plot_convergencehistory`).
+
+Each (value, refinement level) combination is run through the data pipeline
+(`safe_produce_or_load` + `compute_errors`). The plot then shows one curve per
+quantity/value pair against `xquantity`:
+- `:ndofs` or `:h` (convergence comparison): x is the DOF count / mesh size,
+  one curve per quantity/value pair, quantities distinguished by linestyle
+  and marker, values by color; `slopes` adds reference lines O(h^k) anchored
+  at the first curve.
+- `:param`: the sweep values must be numeric and form the x-axis (log-scale
+  if all positive), so one mesh or mesh level (`nrefs`, typically a single
+  value like `nrefs = 4`) is fixed and the quantities are plotted against
+  e.g. the viscosity `μ` or a stabilization factor; one curve per
+  quantity/level pair, quantities by linestyle and marker, levels by color
+  (`slopes` is ignored). For tuple-valued fields such as `stab1 = (α, c1)`,
+  `xindex = 2` plots against the second component.
+
+Incompressible reference quantities (`:H1u_inc`, `:L2u_inc`, `:L2u_diff`) are
+supported as in `plot_convergencehistory`.
+"""
+function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs = 1:4,
+        quantities = DEFAULT_SWEEP_QUANTITIES, xquantity = :ndofs, xindex = nothing,
+        slopes = (1, 2), Plotter = Plots, force = false, force_recompute = false, kwargs...)
+
+    key = String(param)
+    haskey(default_args, key) || error("unknown config field :$param; choose one of: $(sort(collect(keys(default_args))))")
+    key == "nrefs" && error(":nrefs is the x-axis of this plot; sweep another field via param/values")
+    !(xquantity in (:ndofs, :h, :param)) && error("xquantity must be :ndofs, :h or :param")
+
+    if values === nothing
+        choices = get(SWEEP_CHOICES, Symbol(key), nothing)
+        choices !== nothing || error("no default sweep choices for :$param, pass values = [...]")
+        values = collect(choices)
+    else
+        values = values isa AbstractVector ? collect(values) : [values]
+    end
+    length(values) == 1 && @warn "plot_parameter_study: only one value given for :$key"
+
+    ## with xquantity = :param the (numeric) sweep values are the x-axis
+    against_param = xquantity === :param
+    if against_param
+        xvals = map(values) do v
+            v isa Real && return Float64(v)
+            xindex === nothing && error("xquantity = :param needs numeric sweep values, or xindex = <i> to plot against the i-th component of tuple values")
+            v[xindex] isa Real || error("xindex = $xindex does not select a number in the sweep values")
+            return Float64(v[xindex])
         end
     end
 
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = μ
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(μ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(μ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "μ", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(μ, L2u; xlabel = "μ", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    plotfile = filename_plots(data; free_parameter = "μ")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "μ" => vec(repeat(μ, length(nrefs))), "nrefs" => vec(repeat(nrefs, inner = length(μ))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
+    nrefs_vals = collect(nrefs)
+    entries = resolve_quantities(quantities)
+    needs_inc = any(get(e, :incompressible, false) for (_, e) in entries)
 
-function plot_parameter_study_gamma(; nrefs = [3], γ = [1,1e+1,1e+2,1e+3], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    γ = γ isa AbstractVector ? γ : [γ]
+    @info "Plotting parameter study for $key = $(short_name.(values)), nrefs = $nrefs_vals, quantities = $(first.(entries)), xquantity = $xquantity, slopes = $slopes..."
+
     data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(γ), length(nrefs))
-    H1u = zeros(Float64, length(γ), length(nrefs))
-    L2ϱ = zeros(Float64, length(γ), length(nrefs))
+    nv, nl, nq = length(values), length(nrefs_vals), length(entries)
+    vals = [fill(NaN, nv, nl) for _ in 1:nq]   # vals[k][i, j]: quantity k, value i, level j
+    NDoFs = fill(0, nv, nl)
+    NDoFsInc = fill(0, nv, nl)
 
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(γ)
-            data["γ"] = γ[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+    for (i, val) in enumerate(values)
+        @info "study config: $key = $(short_name(val))"
+        for (j, lvl) in enumerate(nrefs_vals)
+            _data = deepcopy(data)
+            _data[key] = val
+            _data["nrefs"] = lvl
+            _data, ~ = safe_produce_or_load(_data; force = force)
+            NDoFs[i, j] = _data["ndofs"]
+            _data = compute_errors(_data; force_recompute = force_recompute, compare_incompressible = needs_inc)
+            for (k, (_, e)) in enumerate(entries)
+                vals[k][i, j] = conv_value(e, _data)
+            end
+            if needs_inc
+                NDoFsInc[i, j] = haskey(_data, "incompressible_solution") ? length(_data["incompressible_solution"].entries) : NDoFs[i, j]
+            end
+        end
+        ## console table of the first up to four selected quantities for this value
+        sel = min(4, nq)
+        if !against_param
+            print_convergencehistory(NDoFs[i, :], hcat([vals[k][i, :] for k in 1:sel]...); X_to_h = X -> X.^(-1/2),
+                ylabels = [string(entries[k][2].label) * " (" * short_name(val) * ")" for k in 1:sel],
+                xlabel = xquantity === :h ? "h" : "ndof", latex_mode = true)
+        end
+    end
+    if against_param
+        ## console table of values against the sweep parameter, per level
+        sel = min(4, nq)
+        for j in 1:nl
+            print_table(xvals, hcat([vals[k][:, j] for k in 1:sel]...); xlabel = key,
+                ylabels = [string(entries[k][2].label) * " level $(nrefs_vals[j])" for k in 1:sel])
         end
     end
 
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = γ
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(γ, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(γ, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "γ", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(γ, L2u; xlabel = "γ", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    plotfile = filename_plots(data; free_parameter = "γ")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "γ" => vec(repeat(γ, length(nrefs))), "nrefs" => vec(repeat(nrefs, inner = length(γ))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_mach_number(; nrefs = [3], c = [1,1e+1,1e+2,1e+3,1e+4,1e+5], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    c = c isa AbstractVector ? c : [c]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c), length(nrefs))
-    H1u = zeros(Float64, length(c), length(nrefs))
-    L2ϱ = zeros(Float64, length(c), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(c)
-            data["c"] = c[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
+    ## collect all curves; Vector{NamedTuple} avoids push! on growing concrete types
+    series = NamedTuple[]
+    logx = true
+    if against_param
+        ## one curve per quantity/level pair against the sweep parameter
+        logx = all(isfinite, xvals) && all(>(0), xvals)
+        for (k, (_, e)) in enumerate(entries)
+            for (j, lvl) in enumerate(nrefs_vals)
+                push!(series, (; x = xvals, y = vals[k][:, j],
+                    label = LaTeXString(string(e.label) * ", level " * string(lvl)),
+                    style = (linestyle = STUDY_LINESTYLES[mod1(k, end)], marker = STUDY_MARKERS[mod1(k, end)],
+                             color = STUDY_COLORS[mod1(j, end)])))
+            end
+        end
+    else
+        ## one curve per quantity/value pair (linestyle and marker by
+        ## quantity, color by value), plus slope reference lines anchored at
+        ## the first curve
+        for (k, (_, e)) in enumerate(entries)
+            for i in 1:nv
+                x0 = get(e, :xinc, false) ? NDoFsInc[i, :] : NDoFs[i, :]
+                x = xquantity === :h ? Float64.(x0) .^ (-1/2) : Float64.(x0)
+                push!(series, (; x, y = vals[k][i, :],
+                    label = LaTeXString(string(e.label) * ", " * short_name(values[i])),
+                    style = (linestyle = STUDY_LINESTYLES[mod1(k, end)], marker = STUDY_MARKERS[mod1(k, end)],
+                             color = STUDY_COLORS[mod1(i, end)])))
+            end
+        end
+        if !isempty(slopes)
+            hvals = Float64.(NDoFs[1, :]) .^ (-1/2)
+            j0 = findfirst(j -> isfinite(vals[1][1, j]) && vals[1][1, j] > 0, 1:nl)
+            if j0 !== nothing
+                y0 = vals[1][1, j0]
+                append!(series, [ (; x = xquantity === :h ? hvals : Float64.(NDoFs[1, :]),
+                    y = y0 .* (hvals ./ hvals[j0]) .^ m,
+                    label = m == 1 ? L"\mathcal{O}(h)" : latexstring("\\mathcal{O}(h^{$m})"),
+                    style = (linestyle = :dash, color = :gray, marker = :none)) for m in slopes ])
+            end
         end
     end
 
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10,1e+1,1e+2]
-    xticks = c
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
+    ## axis ticks: powers of ten covering all plotted values (or the sweep
+    ## values themselves for a linear parameter axis)
+    yticks = log_ticks(reduce(vcat, [s.y for s in series]))
+    xticks = logx ? log_ticks(reduce(vcat, [s.x for s in series])) : unique!(sort!(reduce(vcat, [s.x for s in series])))
+    xlabelv = against_param ? key : (xquantity === :h ? "mesh size h" : "degrees of freedom")
+
+    Plotter.plot(; show = true, size = (1600, 1000), margin = 1Plots.cm, legendfontsize = 14, tickfontsize = 18, guidefontsize = 22, grid = true)
+    for s in series
+        Plotter.plot!(s.x, s.y; xscale = logx ? :log10 : :identity, yscale = :log10, linewidth = 3, markersize = 5,
+            label = s.label, s.style...)
     end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
+    xlimv = logx ? (xticks[1], xticks[end]) : let lo = minimum(reduce(vcat, [s.x for s in series])), hi = maximum(reduce(vcat, [s.x for s in series])), w = max(hi - lo, oneunit(hi))
+        (lo - 0.05w, hi + 0.05w)
     end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"$c_M", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
-    print_table(c, L2ϱ; xlabel = "c", ylabels = "|| ϱ - ϱ_h || ".* labels)
-        
-    ## save
-    plotfile = filename_plots(data; free_parameter = "c")
+    Plotter.plot!(; legend = :best, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = xlimv, xlabel = xlabelv, gridalpha = 0.7, grid = true, background_color_legend = RGBA(1,1,1,0.7))
+
+    ## save: filename freezes all study parameters except the swept field and
+    ## nrefs (done by the pipeline's filename_plots via free_parameter = key)
+    ## plot filename suffix: the swept field (its values are recorded in the
+    ## .txt description), non-default quantity selection and refinement levels
+    ## (a level range with unit step is written as first-last)
+    prefix = "_" * key
+    qnames = [string(n) for (n, _) in entries]
+    qnames == [string(q) for q in DEFAULT_SWEEP_QUANTITIES] || (prefix *= "_" * join(qnames, "-"))
+    nrefs_str = length(nrefs_vals) > 2 && all(==(1), diff(nrefs_vals)) ? "$(nrefs_vals[1])-$(nrefs_vals[end])" : join(nrefs_vals, '-')
+    prefix *= (against_param ? "_levels-$nrefs_str" : "_nrefs-$nrefs_str")
+    plotfile = filename_plots(data; prefix, free_parameter = key)
     Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "c" => vec(repeat(c, length(nrefs))), "nrefs" => vec(repeat(nrefs, inner = length(c))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_mach_viscosity(; nrefs = 3,c = [1,1e+1,1e+2,1e+3,1e+4,1e+5,1e+6], μ = [1e-4,1e-3,1e-2,1e-1,1] , Plotter = Plots, kwargs...)
-    c = c isa AbstractVector ? c : [c]
-    μ = μ isa AbstractVector ? μ : [μ]
-    data = load_data(; kwargs...)
-    data["nrefs"] = nrefs
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c), length(μ))
-    H1u = zeros(Float64, length(c), length(μ))
-    L2ϱ = zeros(Float64, length(c), length(μ))
-
-    for n = 1 : length(μ)
-        data["μ"] = μ[n]
-        for j = 1 : length(c)
-            data["c"] = c[j]
-            data, ~ = safe_produce_or_load(data)
-            L2u[j,n] = data["Error(L2,u)"]
-            H1u[j,n] = data["Error(H1,u)"]
-            L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
+    ## append the computed values to the plot's .txt description (row order: value outer, level inner)
+    columns = Pair{String, Vector}[
+        key => repeat(short_name.(values), inner = nl),
+        "nrefs" => repeat(nrefs_vals, outer = nv),
+        "ndofs" => vec(NDoFs')]
+    against_param && push!(columns, "x" => repeat(xvals, inner = nl))
+    for (k, (name, _)) in enumerate(entries)
+        push!(columns, string(name) => vec(vals[k]'))
     end
-
-    ## plot
-    labels = [" μ =  $μk" for μk in μ]
-    yticks = [1e-12,1e-11,1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1e+0,1e+1,1e+2]
-    xticks = c
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(μ)
-        Plotter.plot!(c, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{μ} = %$(μ[n]) ")
+    if needs_inc
+        push!(columns, "ndofs_inc" => vec(NDoFsInc'))
     end
-    Plotter.plot!(; legend = :topright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = L"c_\mathrm{Ma}", gridalpha = 0.5, grid=true)
-
-    ##
-    print_table(c, L2u; xlabel = "c", ylabels = "|| u - u_h || ".* labels)
-
-    ## save
-    plotfile = filename_plots(data; free_parameter = "cμ")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "c" => vec(repeat(c, length(μ))), "μ" => vec(repeat(μ, inner = length(c))),
-        "nrefs" => fill(nrefs, length(c) * length(μ)),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_stab1(;  nrefs = [3,4,5],c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    c1 = c1 isa AbstractVector ? c1 : [c1]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c1), length(nrefs))
-    H1u = zeros(Float64, length(c1), length(nrefs))
-    L2ϱ = zeros(Float64, length(c1), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(c1)
-                data["stab1"] = (data["stab1"][1], c1[j])
-                data, ~ = safe_produce_or_load(data)
-                L2u[j,n] = data["Error(L2,u)"]
-                H1u[j,n] = data["Error(H1,u)"]
-                L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = c1
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])")
-        Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c1", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(c1, L2u; xlabel = "c1", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    plotfile = filename_plots(data; free_parameter = "c1")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "c1" => vec(repeat(c1, length(nrefs))), "nrefs" => vec(repeat(nrefs, inner = length(c1))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_stab2(;  nrefs = [3,4,5], c2  =[1e-4,1e-2,1,1e+2,1e+4], Plotter = Plots, kwargs...)
-    nrefs = nrefs isa AbstractVector ? nrefs : [nrefs]
-    c2 = c2 isa AbstractVector ? c2 : [c2]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c2), length(nrefs))
-    H1u = zeros(Float64, length(c2), length(nrefs))
-    L2ϱ = zeros(Float64, length(c2), length(nrefs))
-
-    for n = 1 : length(nrefs)
-        data["nrefs"] = nrefs[n]
-        for j = 1 : length(c2)
-                data["stab2"] = (1.5, c2[j])
-                data, ~ = safe_produce_or_load(data)
-                L2u[j,n] = data["Error(L2,u)"]
-                H1u[j,n] = data["Error(H1,u)"]
-                L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    labels = [" level $n" for n in nrefs]
-    yticks = [1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1,10]
-    xticks = c2
-    Plotter.plot(; show = true, size = (1600,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 16, guidefontsize = 22)
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c2, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||∇(\mathbf{u} - \mathbf{u}_h) \,|| \mathrm{level} = %$(nrefs[n])")
-        Plotter.plot!(c2, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"|| {ϱ}-ϱ_h \, || \mathrm{level} = %$(nrefs[n])")
-    end
-    for n = 1 : length(nrefs)
-        Plotter.plot!(c2, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, marker = :circle, markersize = 5, label = L"||\mathbf{u} - \mathbf{u}_h \, || \mathrm{level} = %$(nrefs[n]) ")    
-    end
-    Plotter.plot!(; legend = :bottomright, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlabel = "c2", gridalpha = 0.5, grid=true)
-        
-    ##
-    print_table(c2, L2u; xlabel = "c2", ylabels = "|| u - u_h || ".* labels)
-        
-    ## save
-    plotfile = filename_plots(data; free_parameter = "c2")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "c2" => vec(repeat(c2, length(nrefs))), "nrefs" => vec(repeat(nrefs, inner = length(c2))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_stab1_reconstruction(;  reconstruct = [true,false], c1 = [1e-5,1e-4,1e-3,1e-2,1e-1,1,1e1,1e2,1e3,1e4,1e5], Plotter = Plots, kwargs...)
-    reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
-    c1 = c1 isa AbstractVector ? c1 : [c1]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(c1), length(reconstruct))
-    H1u = zeros(Float64, length(c1), length(reconstruct))
-    L2ϱ = zeros(Float64, length(c1), length(reconstruct))
-
-    for n = 1 : length(reconstruct)
-        data["reconstruct"] = reconstruct[n]
-        for j = 1 : length(c1)
-                data["stab1"] = (data["stab1"][1], c1[j])
-                data, ~ = safe_produce_or_load(data)
-                L2u[j,n] = data["Error(L2,u)"]
-                H1u[j,n] = data["Error(H1,u)"]
-                L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    pi_names = [r ? "\\Pi = I_h^{\\mathrm{RT_0}}" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
-    col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
-    allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
-    allvals = filter(x -> x > 0 && isfinite(x), allvals)
-    ylo = 10.0^floor(log10(minimum(allvals)) - 0.5)
-    yhi = 10.0^ceil(log10(maximum(allvals)) + 1.0)
-    yticks = 10.0 .^ (floor(Int, log10(ylo)):ceil(Int, log10(yhi)))
-    xticks = 10.0 .^ (-5:5)
-    Plotter.plot(; show = true, size = (1200,900), margin = 1Plots.cm, legendfontsize = 14, tickfontsize = 16, guidefontsize = 20)
-    # grouped by quantity; plot red (false) first, green (true) on top so both visible
-    order = sortperm(reconstruct)  # false first, true second
-    for n in order
-        Plotter.plot!(c1, H1u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :dashdot, marker = :circle, markersize = 5, color = col[n], label = latexstring("||\\nabla(\\mathbf{u} - \\mathbf{u}_h)||,\\; ", pi_names[n]))
-    end
-    for n in order
-        Plotter.plot!(c1, L2ϱ[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :dot, marker = :diamond, markersize = 5, color = col[n], label = latexstring("||\\varrho - \\varrho_h||,\\; ", pi_names[n]))
-    end
-    for n in order
-        Plotter.plot!(c1, L2u[:,n]; xscale = :log10, yscale = :log10, linewidth = 3, linestyle = :solid, marker = :square, markersize = 5, color = col[n], label = latexstring("||\\mathbf{u} - \\mathbf{u}_h||,\\; ", pi_names[n]))
-    end
-    Plotter.plot!(; legend = :topleft, xtick = xticks, yticks = yticks, ylim = (ylo, yhi), xlabel = L"c_s", gridalpha = 0.5, grid = true, background_color_legend = RGBA(1,1,1,0.7))
-
-    ##
-    labels = [" Pi=$(reconstruct[n] ? "RT0" : "Gamma")" for n in 1:length(reconstruct)]
-    print_table(c1, L2u; xlabel = "c_s", ylabels = "|| u - u_h || " .* labels)
-
-    ## save
-    plotfile = filename_plots(data; free_parameter = "c1")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "c1" => vec(repeat(c1, length(reconstruct))), "reconstruct" => vec(repeat(reconstruct, inner = length(c1))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
-end
-
-function plot_parameter_study_alpha_reconstruction(;  reconstruct = [true,false], alpha = [0,5e-1,1,1e-0,1+5e-1,2e-0], Plotter = Plots, kwargs...)
-    reconstruct = reconstruct isa AbstractVector ? reconstruct : [reconstruct]
-    alpha = alpha isa AbstractVector ? alpha : [alpha]
-    data = load_data(; kwargs...)
-    @debug "loading config" data
-    L2u = zeros(Float64, length(alpha), length(reconstruct))
-    H1u = zeros(Float64, length(alpha), length(reconstruct))
-    L2ϱ = zeros(Float64, length(alpha), length(reconstruct))
-
-    for n = 1 : length(reconstruct)
-        data["reconstruct"] = reconstruct[n]
-        for j = 1 : length(alpha)
-                data["stab1"] = (alpha[j]-1, data["stab1"][2])
-                @info "α = $(alpha[j])"
-                data, ~ = safe_produce_or_load(data)
-                L2u[j,n] = data["Error(L2,u)"]
-                H1u[j,n] = data["Error(H1,u)"]
-                L2ϱ[j,n] = data["Error(L2,ϱ)"]
-        end
-    end
-
-    ## plot
-    pi_names = [r ? "\\Pi = I_h^{\\mathrm{RT_0}}" : "\\Pi = \\mathrm{Id}" for r in reconstruct]
-    col = [r ? colorant"#389826" : colorant"#CB3C33" for r in reconstruct]  # Julia green / red
-    allvals = vcat(vec(H1u), vec(L2ϱ), vec(L2u))
-    allvals = filter(x -> x > 0 && isfinite(x), allvals)
-    ylo = 10.0^floor(log10(minimum(allvals)) - 0.5)
-    yhi = 10.0^ceil(log10(maximum(allvals)) + 1.0)
-    yticks = 10.0 .^ (floor(Int, log10(ylo)):ceil(Int, log10(yhi)))
-    Plotter.plot(; show = true, size = (1200,900), margin = 1Plots.cm, legendfontsize = 14, tickfontsize = 16, guidefontsize = 20)
-    # grouped by quantity; plot red (false) first, green (true) on top so both visible
-    order = sortperm(reconstruct)  # false first, true second
-    for n in order
-        Plotter.plot!(alpha, H1u[:,n]; yscale = :log10, linewidth = 3, linestyle = :dashdot, marker = :circle, markersize = 5, color = col[n], label = latexstring("||\\nabla(\\mathbf{u} - \\mathbf{u}_h)||,\\; ", pi_names[n]))
-    end
-    for n in order
-        Plotter.plot!(alpha, L2ϱ[:,n]; yscale = :log10, linewidth = 3, linestyle = :dot, marker = :diamond, markersize = 5, color = col[n], label = latexstring("||\\varrho - \\varrho_h||,\\; ", pi_names[n]))
-    end
-    for n in order
-        Plotter.plot!(alpha, L2u[:,n]; yscale = :log10, linewidth = 3, linestyle = :solid, marker = :square, markersize = 5, color = col[n], label = latexstring("||\\mathbf{u} - \\mathbf{u}_h||,\\; ", pi_names[n]))
-    end
-    Plotter.plot!(; legend = :topright, xtick = alpha, yticks = yticks, ylim = (ylo, yhi), xlim = (-0.05, 2.05), xlabel = L"\alpha", gridalpha = 0.5, grid = true, background_color_legend = RGBA(1,1,1,0.7))
-
-    ##
-    labels = [" Pi=$(reconstruct[n] ? "RT0" : "Gamma")" for n in 1:length(reconstruct)]
-    print_table(alpha, L2u; xlabel = "α", ylabels = "|| u - u_h || " .* labels)
-
-    ## save
-    plotfile = filename_plots(data; free_parameter = "α")
-    Plotter.savefig(plotfile)
-    save_plot_values(plotfile, data, Pair{String, Vector}[
-        "α" => vec(repeat(alpha, length(reconstruct))), "reconstruct" => vec(repeat(reconstruct, inner = length(alpha))),
-        "L2u" => vec(L2u), "H1u" => vec(H1u), "L2ϱ" => vec(L2ϱ)])
+    save_plot_values(plotfile, data, columns)
 end

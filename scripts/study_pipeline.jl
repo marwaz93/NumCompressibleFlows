@@ -55,8 +55,8 @@ end
 """
     setup_study!(studyname; plot_folders = [""])
 
-Prepare the folders of the study `studyname` below `datadir("projects", ...)`
-and `plotsdir(...)`, build its DrWatson file naming and file production
+Prepare the folders of the study `studyname` below `datadir(...)` and
+`plotsdir(...)`, build its DrWatson file naming and file production
 functions, and register them in the NumCompressibleFlows module with
 `setup_pipeline!`. `plot_folders` selects the plot subfolders: `""` is the
 convergence history, any other string `fp` a parameter study folder
@@ -65,117 +65,101 @@ compute_errors)` bound to this study.
 """
 function setup_study!(studyname; plot_folders = [""])
     @info "setting up study" studyname
-    dataprefix = datadir("projects", studyname) * "/"
+    dataprefix = datadir(studyname) * "/"
     plots_prefix = plotsdir(studyname) * "/"
     for free_parameter in plot_folders
         mkpath(plots_prefix * plot_folder(free_parameter))
     end
     @info "study folders ready" dataprefix plots_prefix
 
+    ## type parameters (problem definition and discretization choices), as
+    ## savename tag => (config dict key, name abbreviation)
+    typeparams = (
+        vtype   = ("velocitytype",   "Velocity" => "V"),
+        dtype   = ("densitytype",    "Density" => "D"),
+        etype   = ("eostype",        "Law" => ""),  # carries γ, e.g. Power{1.4}
+        gtype   = ("gridtype",       ["UnstructuredUnitSquare" => "SquareUnstruct",
+                                      "UniformUnitSquare" => "SquareUniform",
+                                      "UnitSquare" => "Square"]),
+        ctype   = ("convectiontype", "Convection" => "Conv"),
+        uptype  = ("upwindtype",     "Upwind" => "Upw"),
+        cortype = ("coriolistype",   "Coriolis" => "Cor"),
+    )
+    ## config dict key -> savename tag (for parameters with other names)
+    tagmap = Dict("pressure_in_f" => "pif", "others_in_f" => "oif",
+                  "target_residual" => "tres",
+                  "velocitytype" => "vtype", "densitytype" => "dtype", "eostype" => "etype",
+                  "gridtype" => "gtype", "convectiontype" => "ctype", "upwindtype" => "uptype",
+                  "coriolistype" => "cortype")
+
+    ## savename postprocessing: the (fixed-order) type tags appear as values
+    ## only, i.e. "vtype=ConstantV" becomes "ConstantV"
+    typekey_regex = r"(^|_)(vtype|dtype|etype|gtype|ctype|uptype|cortype)="
+    strip_typekeys(sname) = replace(sname, typekey_regex => Base.SubstitutionString("\\1"))
+
+    """
+        essential(data; nrefs = true, drop = "") -> NamedTuple
+
+    Ordered parameters for `savename` (which keeps the order when `sort =
+    false`); `drop` is the config dict key of a parameter to omit (the field
+    swept by a plot). The type tags lose their key name in the final name via
+    `strip_typekeys`, so they are recognized by their position and the fixed
+    order of this NamedTuple.
+    """
+    function essential(data; nrefs = true, drop = "")
+        droptag = isempty(drop) ? "" : get(tagmap, drop, drop)
+        parts = Pair{Symbol, Any}[]
+        ## problem definition and discretization choices
+        for (tag, (key, abbrev)) in pairs(typeparams)
+            reps = abbrev isa Pair ? (abbrev,) : abbrev
+            push!(parts, tag => replace(string(data[key]), reps...))
+        end
+        push!(parts,
+            :pif => data["pressure_in_f"], :oif => data["others_in_f"],
+            :stab1 => data["stab1"], :stab2 => data["stab2"],
+            :μ => data["μ"], :λ => data["λ"], :c => data["c"], :M => data["M"],
+            :order => data["order"], :reconstruct => data["reconstruct"],
+            :τfac => data["τfac"], :ufac => data["ufac"],
+            :tres => data["target_residual"])
+        nrefs && push!(parts, :nrefs => data["nrefs"])
+        return NamedTuple(filter(p -> String(p.first) != droptag, parts))
+    end
+
     """
         filename(data; prefix = dataprefix) -> String
 
     Build a DrWatson-compatible filename string for a given `data` dict.
-    All key parameters are abbreviated and the result is prefixed with the
-    study's data path `<datadir>/projects/<studyname>/`.
+    All key parameters are abbreviated (see `essential`) and the result is
+    prefixed with the study's data path `<datadir>/projects/<studyname>/`.
     """
     function filename(data; prefix = dataprefix)
-        μ = data["μ"]
-        λ = data["λ"]
-        c = data["c"]
-        M = data["M"]
-        τfac = data["τfac"]
-        ufac = data["ufac"]
-        nrefs = data["nrefs"]
-        order = data["order"]
-        reconstruct = data["reconstruct"]
-        target_residual = data["target_residual"]
-
-        # Abbreviate type names for savename
-        vtype = replace(string(data["velocitytype"]), "Velocity" => "V")
-        dtype = replace(string(data["densitytype"]), "Density" => "D")
-        etype = replace(string(data["eostype"]), "Law" => "")  # carries γ, e.g. Power{1.4}
-        gtype = replace(string(data["gridtype"]), "2D" => "")
-        ctype = replace(string(data["convectiontype"]), "Convection" => "Conv")
-        cortype = replace(string(data["coriolistype"]), "Coriolis" => "Cor")
-        pressure_in_f = data["pressure_in_f"]
-        stab1 = data["stab1"]
-        stab2 = data["stab2"]
-        convectiontype = data["convectiontype"]
-
-        ## ordered by relevance: problem definition, physics parameters,
-        ## discretization, numerical factors, solver tolerance, refinement
-        ## level (savename keeps the order of a NamedTuple when sort = false)
-        essential = (vtype = vtype, dtype = dtype, etype = etype, gtype = gtype,
-                     ctype = ctype, cortype = cortype, pressure_in_f = pressure_in_f,
-                     stab1 = stab1, stab2 = stab2,
-                     μ = μ, λ = λ, c = c, M = M,
-                     order = order, reconstruct = reconstruct,
-                     τfac = τfac, ufac = ufac, tres = target_residual,
-                     nrefs = nrefs)
-
-        sname = savename(essential; sort = false,
+        sname = savename(essential(data); sort = false,
                          allowedtypes = (Real, String, SubString, Symbol,
                                          Tuple{Real, Real}))
-        sname = prefix * sname
-        return sname
+        return prefix * strip_typekeys(sname)
     end
 
     """
         filename_plots(data; prefix = "", free_parameter = "")
 
-    Build a filename for a plot using `savename` with parameters selected by
-    `free_parameter`.  Each free parameter freezes a different subset of the
-    remaining parameters for inclusion in the savename. The plot is placed in
-    the study's plot subfolder (`convergence_history` or
-    `parameter_studies_<fp>`). Returns a path string ending in `.png`. As a
-    side effect, writes a `.txt` file describing the parameters next to the
-    (about to be saved) plot file.
+    Build a filename for a plot using `savename`. The name freezes exactly the
+    parameters that identify the study's data files (see `filename`), except
+    the refinement level `nrefs` (a plot spans a range of levels, appended to
+    the `prefix` by the plotting function) and, for parameter studies, the
+    swept config field `free_parameter` (a key of the config dict, e.g.
+    `"convectiontype"`; empty for the plain convergence history). The plot is
+    placed in the study's plot subfolder (`convergence_history` or
+    `parameter_studies_<fp>`, created on demand). Returns a path string ending
+    in `.png`. As a side effect, writes a `.txt` file describing the
+    parameters next to the (about to be saved) plot file.
     """
     function filename_plots(data; prefix = "", free_parameter = "")
-        μ = data["μ"]
-        c = data["c"]
-        etype = replace(string(data["eostype"]), "Law" => "")  # carries γ, e.g. Power{1.4}
-        ϵ = 1 - data["stab1"][1]
-        c1 = data["stab1"][2]
-        nrefs = data["nrefs"]
-        reconstruct = data["reconstruct"]
-        convectiontype = string(data["convectiontype"])
-        pressure_in_f = data["pressure_in_f"]
-
-        # Select which params go into savename depending on free_parameter,
-        # ordered by relevance: problem definition, stabilization, physics,
-        # discretization (savename keeps the order when sort = false)
-        essential = if free_parameter == "μ"
-            (convectiontype = convectiontype, ϵ = ϵ, c1 = c1, c = c, etype = etype,
-             reconstruct = reconstruct, nrefs = nrefs)
-        elseif free_parameter == "γ"
-            (convectiontype = convectiontype, ϵ = ϵ, c1 = c1, μ = μ, c = c,
-             reconstruct = reconstruct, nrefs = nrefs)
-        elseif free_parameter == "c"
-            (convectiontype = convectiontype, ϵ = ϵ, c1 = c1, μ = μ, etype = etype,
-             reconstruct = reconstruct, nrefs = nrefs)
-        elseif free_parameter == "cμ"
-            (convectiontype = convectiontype, ϵ = ϵ, c1 = c1, etype = etype,
-             reconstruct = reconstruct, nrefs = nrefs)
-        elseif free_parameter == "c1"
-            (convectiontype = convectiontype, ϵ = ϵ, μ = μ, c = c, etype = etype,
-             reconstruct = reconstruct, nrefs = nrefs)
-        elseif free_parameter in ("c2", "α")
-            (convectiontype = convectiontype, ϵ = ϵ, c1 = c1, μ = μ, c = c, etype = etype,
-             reconstruct = reconstruct, nrefs = nrefs)
-        else
-            ## convergence history: no single nrefs (the run spans a range of levels,
-            ## appended to the prefix by plot_convergencehistory instead)
-            (convectiontype = convectiontype, pressure_in_f = pressure_in_f,
-             ϵ = ϵ, c1 = c1, μ = μ, c = c, etype = etype, reconstruct = reconstruct)
-        end
-
-        sname = savename(essential; sort = false,
+        sname = strip_typekeys(savename(essential(data; nrefs = false, drop = free_parameter); sort = false,
                          allowedtypes = (Real, String, SubString, Symbol,
-                                         Tuple{Real, Real}))
-
-        sname = plots_prefix * plot_folder(free_parameter) * "/" * sname * prefix * ".png"
+                                         Tuple{Real, Real})))
+        folder = plots_prefix * plot_folder(free_parameter)
+        mkpath(folder)
+        sname = folder * "/" * sname * prefix * ".png"
         write_description(sname[1:end-4], data; header = "plot file $sname, free_parameter = $(free_parameter), prefix = $(prefix)")
         return sname
     end
