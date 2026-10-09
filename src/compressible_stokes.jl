@@ -260,6 +260,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             assemble!(bconv, LinearOperatorDG(
             kernel_upwind_convection!, [jump(id(1))], [id(1), this(id(2)), other(id(2)), this(id(3)), other(id(3))];
             factor = -1, quadorder = 0, entities = ON_IFACES, params = [fluxes]), [args[1], args[2], u0[1]])
+
+            ## same face term on boundary faces with exterior state (ϱ,û) from the
+            ## Dirichlet data u!, ϱ! (upwinded by the outward flux u! ⋅ n)
+            assemble!(bconv, LinearOperatorDG(
+            kernel_upwind_convection_bdry!(u!, ϱ!), [jump(id(1))], [this(id(2)), this(id(3))];
+            factor = -1, quadorder = 0, entities = ON_BFACES), [args[1], args[2], u0[1]])
             
             
             if stab1[2] > 0
@@ -290,13 +296,17 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
          # project current velocity to P0
     FES_P0 = FESpace{L2P0{2}}(xgrid)
     u0 = FEVector(FES_P0)    
-    bconv = FEVector(FES[1])
-    
+    bconv = FEVector(FES_P0)
+
+    T = nothing 
 
     function callback_newconvection!(A, b, args; assemble_matrix = true,
                        assemble_rhs = true, time = 0, kwargs...)
 
         if assemble_rhs
+            if isnothing(T)
+                T = compute_lazy_interpolation_jacobian(FES_P0, args[1].FES)
+            end
             lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = input[1]^2+input[2]^2;), quadorder = 4)
 
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
@@ -304,11 +314,19 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             evaluate!(fluxes, FluxIntegrator, [args[1]])
             view(fluxes,:) ./= xgrid[FaceVolumes]
 
+            ## face terms of ϱ‖u‖²/2 upwinded by u ⋅ n, assembled against the broken
+            ## P0 test and lifted to the velocity rows via T' below (all boundary face
+            ## dofs of the BR velocity are constrained, a normalflux test on ON_BFACES
+            ## would only write into constrained rows); on boundary faces the exterior
+            ## traces (ϱ,‖u‖²) are taken from the Dirichlet data u!, ϱ!
             fill!(bconv.entries, 0)
             assemble!(bconv, LinearOperatorDG(
-            kernel_upwind_newconvection!, [normalflux(1)], [this(id(2)), other(id(2)), jump(id(3))];
+            kernel_upwind_newconvection!, [jump(id(1))], [this(id(2)), other(id(2)), jump(id(3))];
             factor = -1/2, quadorder = 0, entities = ON_IFACES, params = [fluxes]), [args[1], args[2], u0[1]])
             
+            assemble!(bconv, LinearOperatorDG(
+            kernel_upwind_newconvection_bdry!(u!, ϱ!), [jump(id(1))], [this(id(2)), this(id(3))];
+            factor = -1/2, quadorder = 0, entities = ON_BFACES), [args[1], args[2], u0[1]])
             
             if stab1[2] > 0
                 assemble!(bconv, LinearOperatorDG(
@@ -317,7 +335,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                     factor = stab1[2]/2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
             end
 
-            b .+= bconv.entries
+            b .+= view(bconv.entries' * T,:)
             
         end
 

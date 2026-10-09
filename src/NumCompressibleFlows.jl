@@ -39,7 +39,8 @@ include("utilities.jl")
 include("kernels.jl")
 export stab_kernel!
 export kernel_continuity!
-export kernel_upwind!, kernel_upwind2!, kernel_upwind_convection!, kernel_upwind_newconvection!
+export kernel_upwind!, kernel_upwind2!, kernel_upwind_convection!, kernel_upwind_convection_bdry!
+export kernel_upwind_newconvection!, kernel_upwind_newconvection_bdry!
 export exact_error!, exact_error_incompressible!
 export standard_gravity!
 export energy_kernel!
