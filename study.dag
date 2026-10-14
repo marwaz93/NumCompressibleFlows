@@ -1,0 +1,13 @@
+# Solve all levels in parallel, then make the plots from the data files.
+# Submit with: condor_submit_dag study.dag
+JOB solve julia_job.sub
+VARS solve jobtype="solve"
+
+JOB plot julia_job.sub
+VARS plot jobtype="plot"
+
+# plot whatever finished, even if some solve jobs failed
+# (the plot jobs skip configurations with missing data files)
+SCRIPT POST solve /bin/true
+
+PARENT solve CHILD plot

@@ -1,155 +1,137 @@
 #!/usr/bin/env julia
+# Command line entry point for the HTCondor jobs (see create_parameters.sh).
+# Arguments are key=value pairs, e.g.
+#
+#   julia --project=. scripts/run.jl mode=solve example=p7vortex_powerlaw \
+#       convectiontype=OseenConvection mu=0.01 "stab1=(0.9,0)" "stab2=(1.5,0)" nrefs=9
+#
+#   julia --project=. scripts/run.jl mode=plot example=p7vortex_powerlaw \
+#       convectiontypes=NoConvection+OseenConvection mu=0.01 "stab1=(0.9,0)" "stab2=(1.5,0)" nrefs=1:9
+#
+# mode=solve computes (or loads) one refinement level of one configuration and
+# its errors, mode=plot draws the convergence history of every given
+# convection type and a comparison plot of all of them from existing data
+# files (configurations with missing levels are skipped, never recomputed).
+# All parameters not given here are the defaults of default_args in
+# src/compressible_stokes.jl.
 
-# --- Project setup ---
-using Pkg
-Pkg.activate(joinpath(@__DIR__, ".."))
+## no display on the compute servers
+ENV["GKSwstype"] = "100"
 
-# --- Load your codebase ---
-# This should be the file that defines:
-#   plot_convergencehistory
-#   P7VortexVelocity, LinearDensity, UnstructuredUnitSquare, PowerLaw, etc.
-include("stationary_examples.jl")
-
-# --- Read parameters (env vars with defaults) ---
-#γ    = parse(Float64, ARGS[1])
-#μ    = parse(Float64, get(ENV, "MU", "0.1"))
-#τfac = parse(Float64, get(ENV, "TAUFAC", "1.0"))
-#c    = parse(Int,     get(ENV, "C", "2"))
-
-# nrefs = get(ENV, "NREFS", "1:2")
-# nrefs = eval(Meta.parse(nrefs))   # safe here since you control input
-
-# stab1 = get(ENV, "STAB1", "(0.1,1)")
-# stab1 = eval(Meta.parse(stab1))
-# function parse_arguments()
-#     params = Dict{String, String}()
-    
-#     for arg in ARGS
-#         key, value = split(arg, "=", limit=2)
-#         params[key] = value
-#     end
-
-#     return params
-# end
+using NumCompressibleFlows
+using Plots
 
 # ============================
-# Type-specific parsers
+# examples: study script and fixed problem data (as in the run_study defaults
+# of the corresponding script)
 # ============================
 
-parse_parameter(::Type{Float64}, s::String) =
-    parse(Float64, s)
+const EXAMPLES = Dict(
+    "p7vortex_powerlaw" => (
+        velocitytype = P7VortexVelocity,
+        densitytype = ExponentialDensity,
+        eostype = PowerLaw{1.4},
+        gridtype = UnstructuredUnitSquare,
+    ),
+    "rigidbodyrotation" => (
+        velocitytype = RigidBodyRotation,
+        densitytype = ExponentialDensityRBR,
+        eostype = IdealGasLaw,
+        gridtype = UnstructuredUnitSquare,
+    ),
+)
 
-parse_parameter(::Type{Bool}, s::String) =
-    parse(Bool, s)
+const CONVECTIONTYPES = Dict(
+    "NoConvection" => NoConvection,
+    "StandardConvection" => StandardConvection,
+    "OseenConvection" => OseenConvection,
+    "RotationForm" => RotationForm,
+    "KarperConvection" => KarperConvection,
+    "NewConvection" => NewConvection,
+)
 
-parse_parameter(::Type{Tuple{Float64,Float64}}, s::String) = begin
-    s = strip(s, ['(', ')'])
-    a, b = split(s, ",")
-    (parse(Float64, strip(a)), parse(Float64, strip(b)))
-end
+# ============================
+# parsers
+# ============================
 
-parse_parameter(::Type{UnitRange{Int64}}, s::String) = begin
+## integers stay integers, so that e.g. mu=1 gives the same filenames as μ = 1 in the scripts
+parse_number(s) = something(tryparse(Int, s), parse(Float64, s))
+
+parse_tuple(s) = Tuple(parse_number(strip(v)) for v in split(strip(s, ['(', ')']), ","))
+
+function parse_nrefs(s)
+    occursin(":", s) || return parse(Int, s)
     a, b = split(s, ":")
-    parse(Int, a):parse(Int, b)
+    return parse(Int, a):parse(Int, b)
 end
 
-parse_parameter(::Type{TestVelocity}, s::String) = begin
-    velocity_types = Dict(
-        "ZeroVelocity"       => ZeroVelocity,
-        "ConstantVelocity"   => ConstantVelocity,
-        "LinearVelocity"     => LinearVelocity,
-        "P7VortexVelocity"   => P7VortexVelocity,
-        "RigidBodyRotation"  => RigidBodyRotation
-    )
-
-    if !haskey(velocity_types, s)
-        error("Unknown velocity type: $s")
-    end
-
-    velocity_types[s]
+function parse_convectiontype(s)
+    haskey(CONVECTIONTYPES, s) || error("unknown convectiontype $s, choose from $(sort(collect(keys(CONVECTIONTYPES))))")
+    return CONVECTIONTYPES[s]
 end
 
-# ============================
-# Parameter parser
-# ============================
-
-function parse_parameters()
-
-    raw = Dict{String,String}()
-
-    for arg in ARGS
-        key, value = split(arg, "=", limit=2)
+function parse_arguments(args)
+    raw = Dict{String, String}()
+    for arg in args
+        key, value = split(arg, "="; limit = 2)
         raw[key] = value
     end
+    get_arg(key) = haskey(raw, key) ? raw[key] : error("missing parameter: $key")
 
-    parameter_types = Dict(
-        "gamma"   => Float64,
-        "mu"      => Float64,
-        "c"       => Float64,
-        "M"       => Float64,
-        "tau_fac" => Float64,
-        "stab1"  => Tuple{Float64,Float64},
-        "nrefs" => UnitRange{Int64},
-        "reconstruct"  => Bool,
-        "velocitytype" => TestVelocity
+    mode = get_arg("mode")
+    mode in ("solve", "plot") || error("mode must be solve or plot")
+    example = get_arg("example")
+    haskey(EXAMPLES, example) || error("unknown example $example, choose from $(sort(collect(keys(EXAMPLES))))")
+
+    params = (;
+        mode,
+        example,
+        nrefs = parse_nrefs(get_arg("nrefs")),
+        convectiontypes = mode == "solve" ? [parse_convectiontype(get_arg("convectiontype"))] :
+                          parse_convectiontype.(split(get_arg("convectiontypes"), "+")),
+        μ = parse_number(get_arg("mu")),
+        stab1 = parse_tuple(get_arg("stab1")),
+        stab2 = parse_tuple(get_arg("stab2")),
     )
-
-    params = Dict{String,Any}()
-
-    for (name, T) in parameter_types
-
-        if !haskey(raw, name)
-            error("Missing parameter: $name")
-        end
-
-        params[name] = parse_parameter(T, raw[name])
-    end
-
     return params
 end
 
-function main()
+# ============================
+# main
+# ============================
 
-    params = parse_parameters()
-    γ    = params["gamma"]
-    μ    = params["mu"]
-    c    = params["c"] 
-    M = params["M"]
-    τfac   = params["tau_fac"]
-    stab1     = params["stab1"]
-    nrefs    = params["nrefs"]
-    velocitytype  = params["velocitytype"]
-    #densitytype = params["densitytype"])
-    #gridtype = params["gridtype"])
-    #eostype = params["eostype"])
-    reconstruct = params["reconstruct"]
+function main(params, study)
+    config(convectiontype) = (; EXAMPLES[params.example]..., convectiontype,
+                                μ = params.μ, stab1 = params.stab1, stab2 = params.stab2)
 
-   @show γ, typeof(γ)
-   @show μ, typeof(μ)
-   @show c, typeof(c) 
-   @show M, typeof(M)
-   @show τfac, typeof(τfac)
-   @show stab1, typeof(stab1)
-   @show nrefs, typeof(nrefs)
-   @show reconstruct, typeof(reconstruct)
-   @show velocitytype, typeof(velocitytype)
-
-   # --- Run your function ---
-    plot_convergencehistory(
-        Plotter      = Plots,
-        velocitytype = velocitytype,
-        densitytype  = LinearDensity,
-        gridtype     = UnstructuredUnitSquare,
-        eostype      = PowerLaw{γ},
-        c            = c,
-        γ            = γ,
-        μ            = μ,
-        M            = M,
-        τfac         = τfac,
-        nrefs        = nrefs,
-        stab1        = stab1,
-        reconstruct  = reconstruct
-    )
+    if params.mode == "solve"
+        data = load_data(; config(only(params.convectiontypes))..., nrefs = params.nrefs)
+        @info "solving" data
+        ## loads instead of recomputing if the data file already exists
+        study.produce(data)
+        study.compute_errors(data; compare_incompressible = false)
+    else
+        complete = filter(params.convectiontypes) do convectiontype
+            missing = [lvl for lvl in params.nrefs
+                       if !isfile(study.filename(load_data(; config(convectiontype)..., nrefs = lvl)) * ".jld2")]
+            isempty(missing) || @warn "skipping $convectiontype, missing levels $missing"
+            return isempty(missing)
+        end
+        for convectiontype in complete
+            plot_convergencehistory(; nrefs = params.nrefs, config(convectiontype)...)
+        end
+        if length(complete) > 1
+            plot_parameter_study(; param = :convectiontype, values = complete,
+                                   nrefs = params.nrefs, config(first(complete))...)
+        end
+    end
+    return nothing
 end
 
-main()
+params = parse_arguments(ARGS)
+@show params
+
+## sets up the data/plots folders and filenames of the study, defines `study`
+include(joinpath(@__DIR__, params.example * ".jl"))
+
+main(params, study)
