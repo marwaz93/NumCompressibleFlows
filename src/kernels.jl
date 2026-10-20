@@ -66,6 +66,21 @@ function kernel_rotationform_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+## Bernoulli consistency correction for the rotation form: elementwise IBP of
+## (ϱ∇(½‖u‖²), v) leaves, for broken ϱ, the additional face term
+##   -Σ_F ∫_F ½‖u‖² jump(ϱ) v⋅n,
+## which vanishes for smooth ϱ and restores algebraic consistency with the
+## standard convection form (verified up to round-off by assembly identity tests).
+## kernel for -∫_F ½‖u‖² ϱjump n ⋅ v on ON_FACES in momentum balance
+function kernel_rotationform_bernoulli_jump!(result, args, qpinfo) # args = [id(u), jump(ϱ)]
+    u = view(args, 1:2)
+    ϱjump = args[3]
+    c = -0.5 * dot(u, u) * ϱjump
+    result[1] = c * qpinfo.normal[1]
+    result[2] = c * qpinfo.normal[2]
+    return nothing
+end
+
 ## kernel for (ϱ rotu × u, v) ON_CELLS in momentum balance
 function kernel_new_rotationform_linearoperator!(result, args, qpinfo)
     u = view(args,1:2)

@@ -222,6 +222,16 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
         kernel_rotationform_linearoperator!, [id_u, div_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
         factor = -1, kwargs...))
+
+    ## consistency correction of the Bernoulli term: elementwise IBP of
+    ## (ϱ∇(½‖u‖²), v) leaves, for broken ϱ, the jump term
+    ##   -Σ_F ∫_F ½‖u‖² jump(ϱ) v⋅n,
+    ## which vanishes for smooth ϱ and makes the rotation form algebraically
+    ## identical to StandardConvection (order 1); for order > 1 the additional
+    ## cell term (½‖u‖², v⋅∇ϱ) would also be required
+    assign_operator!(PD, LinearOperatorDG(
+        kernel_rotationform_bernoulli_jump!, [id(u)], [id(u), jump(id(ϱ))];
+        quadorder = 2*order + 1, entities = ON_FACES, factor = 1, kwargs...))
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
