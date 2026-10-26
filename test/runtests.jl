@@ -49,10 +49,11 @@ tol = 1.0e-13
             @test e.L2ϱ < tol
         end
     end
-    # note: KarperConvection is not tested here since its upwind convection
-    # term currently assumes homogeneous velocity boundary data, which
-    # ConstantVelocity (inflow/outflow on the unit square) does not have
-    for convectiontype in (StandardConvection, OseenConvection)
+    # note: KarperConvection and NewConvection are tested here as well since
+    # their upwind face terms now include a ghost boundary contribution from
+    # the Dirichlet data u!, ϱ!, which makes ConstantVelocity (inflow/outflow
+    # on the unit square) an exact fixed point of the discrete scheme
+    for convectiontype in (StandardConvection, OseenConvection, NewConvection, KarperConvection)
         @testset "convectiontype = $convectiontype" begin
             e = manufactured_errors(convectiontype = convectiontype)
             println("errors ($convectiontype): L2u = $(e.L2u), H1u = $(e.H1u), L2ϱ = $(e.L2ϱ)")

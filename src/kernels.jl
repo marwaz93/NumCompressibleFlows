@@ -66,6 +66,21 @@ function kernel_rotationform_linearoperator!(result, args, qpinfo)
     return nothing
 end
 
+## Bernoulli consistency correction for the rotation form: elementwise IBP of
+## (ϱ∇(½‖u‖²), v) leaves, for broken ϱ, the additional face term
+##   -Σ_F ∫_F ½‖u‖² jump(ϱ) v⋅n,
+## which vanishes for smooth ϱ and restores algebraic consistency with the
+## standard convection form (verified up to round-off by assembly identity tests).
+## kernel for -∫_F ½‖u‖² ϱjump n ⋅ v on ON_FACES in momentum balance
+function kernel_rotationform_bernoulli_jump!(result, args, qpinfo) # args = [id(u), jump(ϱ)]
+    u = view(args, 1:2)
+    ϱjump = args[3]
+    c = -0.5 * dot(u, u) * ϱjump
+    result[1] = c * qpinfo.normal[1]
+    result[2] = c * qpinfo.normal[2]
+    return nothing
+end
+
 ## kernel for (ϱ rotu × u, v) ON_CELLS in momentum balance
 function kernel_new_rotationform_linearoperator!(result, args, qpinfo)
     u = view(args,1:2)
@@ -163,15 +178,53 @@ function kernel_upwind_convection!(result, args, qpinfo) # u = [id(u)], input = 
     end
 end
 
-function kernel_upwind_newconvection!(result, args, qpinfo) # u = [id(u)], input = [this(id(ϱ)), other(id(ϱ))]
+## KarperConvection face term on boundary faces; exterior state (ϱ,û) from Dirichlet data
+function kernel_upwind_convection_bdry!(u!, ϱ!)
+    uval = zeros(Float64, 2)
+    ϱval = zeros(Float64, 1)
+    function closure(result, args, qpinfo) # args = [this(id(ϱ)), this(id(û))]
+        ϱL = view(args, 1)
+        u0L = view(args, 2:3)
+        u!(uval, qpinfo)
+        ϱ!(ϱval, qpinfo)
+        flux = dot(uval, qpinfo.normal) # outward normal flux of the boundary data
+        return if flux > 0             # outflow: upwind from inside
+            result .= ϱL .* u0L .* flux
+        else                           # inflow: upwind from boundary data
+            result .= ϱval[1] .* uval .* flux
+        end
+    end
+end
+
+## convection face term with broken P0 test: result (dim 2) is multiplied with jump(μ)
+function kernel_upwind_newconvection!(result, args, qpinfo) # args = [this(id(ϱ)), other(id(ϱ)), jump(id(‖u‖²))]
     ϱL = view(args, 1)
     ϱR = view(args, 2)
     u0_jump = view(args, 3) 
     flux = qpinfo.params[1][qpinfo.item] #dot(u, qpinfo.normal) # u * n
     return if flux > 0
-        result .= ϱL .* u0_jump
+        result .= ϱL .* u0_jump .* qpinfo.normal
     else
-        result .= ϱR .* u0_jump
+        result .= ϱR .* u0_jump .* qpinfo.normal
+    end
+end
+
+## NewConvection face term on boundary faces; exterior state (ϱ,‖u‖²) from Dirichlet data
+function kernel_upwind_newconvection_bdry!(u!, ϱ!)
+    uval = zeros(Float64, 2)
+    ϱval = zeros(Float64, 1)
+    function closure(result, args, qpinfo) # args = [this(id(ϱ)), this(id(‖u‖²))]
+        ϱL = view(args, 1)
+        u2L = view(args, 2)
+        u!(uval, qpinfo)
+        ϱ!(ϱval, qpinfo)
+        jump2 = u2L .- dot(uval, uval)   # [‖u‖²] with ‖u!‖² as exterior trace
+        flux = dot(uval, qpinfo.normal)  # outward normal flux of the boundary data
+        return if flux > 0               # outflow: upwind from inside
+            result .= ϱL .* jump2 .* qpinfo.normal
+        else                             # inflow: upwind from boundary data
+            result .= ϱval[1] .* jump2 .* qpinfo.normal
+        end
     end
 end
 
