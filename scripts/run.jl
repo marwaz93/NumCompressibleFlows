@@ -12,8 +12,9 @@
 # its errors, mode=plot draws the convergence history of every given
 # convection type and a comparison plot of all of them from existing data
 # files (configurations with missing levels are skipped, never recomputed).
-# All parameters not given here are the defaults of default_args in
-# src/compressible_stokes.jl.
+# Optional arguments: c=1000, reconstruct=RT|BDM|none. All parameters not
+# given here are the defaults of default_args in src/compressible_stokes.jl
+# (so that the data filenames match those of the study scripts).
 
 ## no display on the compute servers
 ENV["GKSwstype"] = "100"
@@ -70,6 +71,17 @@ function parse_convectiontype(s)
     return CONVECTIONTYPES[s]
 end
 
+function parse_reconstruct(s)
+    s in ("RT", "BDM", "none") || error("unknown reconstruct $s, choose from RT, BDM, none")
+    return Symbol(s)
+end
+
+## optional arguments: command line key => (config dict key, parser)
+const OPTIONAL_ARGUMENTS = Dict(
+    "c" => (:c, parse_number),
+    "reconstruct" => (:reconstruct, parse_reconstruct),
+)
+
 function parse_arguments(args)
     raw = Dict{String, String}()
     for arg in args
@@ -92,6 +104,7 @@ function parse_arguments(args)
         μ = parse_number(get_arg("mu")),
         stab1 = parse_tuple(get_arg("stab1")),
         stab2 = parse_tuple(get_arg("stab2")),
+        optional = NamedTuple(key => parser(raw[arg]) for (arg, (key, parser)) in OPTIONAL_ARGUMENTS if haskey(raw, arg)),
     )
     return params
 end
@@ -102,7 +115,7 @@ end
 
 function main(params, study)
     config(convectiontype) = (; EXAMPLES[params.example]..., convectiontype,
-                                μ = params.μ, stab1 = params.stab1, stab2 = params.stab2)
+                                μ = params.μ, stab1 = params.stab1, stab2 = params.stab2, params.optional...)
 
     if params.mode == "solve"
         data = load_data(; config(only(params.convectiontypes))..., nrefs = params.nrefs)
