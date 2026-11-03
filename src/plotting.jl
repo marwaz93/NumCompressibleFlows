@@ -110,7 +110,8 @@ end
 ## common type suffixes abbreviated)
 short_name(v) = replace(string(v), "NumCompressibleFlows." => "",
     "UnstructuredUnitSquare" => "SquareUnstruct", "UniformUnitSquare" => "SquareUniform",
-    "UnitSquare" => "Square", "Convection" => "Conv", "Upwind" => "Upw",
+    "UnstructuredUnitCube" => "CubeUnstruct",
+    "UnitSquare" => "Square", "UnitCube" => "Cube", "Convection" => "Conv", "Upwind" => "Upw",
     "Coriolis" => "Cor", "Approximation" => "")
 
 """
@@ -295,11 +296,13 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     NDoFs = zeros(Int, nl)
     NDoFsInc = zeros(Int, nl)
     Residuals = zeros(Float64, nl, 2)
+    dim = 2
 
     for (j, lvl) in enumerate(nrefs)
         _data = deepcopy(data)
         _data["nrefs"] = lvl
         _data, ~ = safe_produce_or_load(_data; force = force)
+        dim = get(_data, "dim", dim)
         NDoFs[j] = _data["ndofs"]
         _data = compute_errors(_data; force_recompute = force_recompute, compare_incompressible = needs_inc)
 
@@ -323,7 +326,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
 
         ## console table of the first up to four selected quantities
         sel = min(4, length(entries))
-        print_convergencehistory(NDoFs[:], hcat(vals[1:sel]...); X_to_h = X -> X.^(-1/2),
+        print_convergencehistory(NDoFs[:], hcat(vals[1:sel]...); X_to_h = X -> X.^(-1/dim),
             ylabels = [string(entries[k][2].label) for k in 1:sel],
             xlabel = xquantity === :h ? "h" : "ndof", latex_mode = true)
     end
@@ -333,14 +336,14 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     if !(xquantity in (:ndofs, :h))
         error("xquantity must be :ndofs or :h")
     end
-    hvals = NDoFs[:].^(-1/2)
+    hvals = NDoFs[:].^(-1/dim)
     xof = xquantity === :h ? hvals : Float64.(NDoFs[:])
 
     ## collect all curves first, so that the axis ticks can cover the plotted data
     ## (built via vcat instead of push! into a growing vector: quantity curves and slope
     ## reference lines are different concrete NamedTuple types, which breaks push! growth)
     series = vcat(
-        [ (; x = Float64.(get(e, :xinc, false) ? (xquantity === :h ? NDoFsInc[:].^(-1/2) : NDoFsInc[:]) : xof),
+        [ (; x = Float64.(get(e, :xinc, false) ? (xquantity === :h ? NDoFsInc[:].^(-1/dim) : NDoFsInc[:]) : xof),
             y = vals[k], label = e.label, style = get(e, :style, NamedTuple()))
           for (k, (_, e)) in enumerate(entries) ],
         [ (; x = xof, y = (m == 1 ? 0.5 : m == 2 ? 1e+1 : 1.0) .* hvals.^m,
@@ -475,6 +478,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
     vals = [fill(NaN, nv, nl) for _ in 1:nq]   # vals[k][i, j]: quantity k, value i, level j
     NDoFs = fill(0, nv, nl)
     NDoFsInc = fill(0, nv, nl)
+    dim = 2
 
     for (i, val) in enumerate(values)
         @info "study config: $key = $(short_name(val))"
@@ -483,6 +487,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
             _data[key] = val
             _data["nrefs"] = lvl
             _data, ~ = safe_produce_or_load(_data; force = force)
+            dim = get(_data, "dim", dim)
             NDoFs[i, j] = _data["ndofs"]
             _data = compute_errors(_data; force_recompute = force_recompute, compare_incompressible = needs_inc)
             for (k, (_, e)) in enumerate(entries)
@@ -495,7 +500,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
         ## console table of the first up to four selected quantities for this value
         sel = min(4, nq)
         if !against_param
-            print_convergencehistory(NDoFs[i, :], hcat([vals[k][i, :] for k in 1:sel]...); X_to_h = X -> X.^(-1/2),
+            print_convergencehistory(NDoFs[i, :], hcat([vals[k][i, :] for k in 1:sel]...); X_to_h = X -> X.^(-1/dim),
                 ylabels = [string(entries[k][2].label) * " (" * short_name(val) * ")" for k in 1:sel],
                 xlabel = xquantity === :h ? "h" : "ndof", latex_mode = true)
         end
@@ -530,7 +535,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
         for (k, (_, e)) in enumerate(entries)
             for i in 1:nv
                 x0 = get(e, :xinc, false) ? NDoFsInc[i, :] : NDoFs[i, :]
-                x = xquantity === :h ? Float64.(x0) .^ (-1/2) : Float64.(x0)
+                x = xquantity === :h ? Float64.(x0) .^ (-1/dim) : Float64.(x0)
                 push!(series, (; x, y = vals[k][i, :],
                     label = LaTeXString(string(e.label) * ", " * short_name(values[i])),
                     style = (linestyle = STUDY_LINESTYLES[mod1(k, end)], marker = STUDY_MARKERS[mod1(k, end)],
@@ -538,7 +543,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
             end
         end
         if !isempty(slopes)
-            hvals = Float64.(NDoFs[1, :]) .^ (-1/2)
+            hvals = Float64.(NDoFs[1, :]) .^ (-1/dim)
             j0 = findfirst(j -> isfinite(vals[1][1, j]) && vals[1][1, j] > 0, 1:nl)
             if j0 !== nothing
                 y0 = vals[1][1, j0]

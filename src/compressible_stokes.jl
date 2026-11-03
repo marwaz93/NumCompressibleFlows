@@ -92,32 +92,34 @@ function run_incompressible!(data; kwargs...)
     stab1          = data["stab1"]
 
     ## prepare data with incompressible switch (ρ ≡ M, 1/c terms ignored)
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+    d = size(xgrid[Coordinates], 1)
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, convectiontype, incompressible = true, kwargs...)
-    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+                     ufac, convectiontype, incompressible = true, dim = d, kwargs...)
 
     ## in/outflow regions (same construction as in run_single)
     testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
     rinflow  = inflow_regions(velocitytype, gridtype)
     routflow = outflow_regions(velocitytype, gridtype)
-    rhom     = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
+    rwall    = wall_regions(velocitytype, gridtype)
+    rhom     = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow, rwall))
 
     ## define unknowns
-    u = Unknown("u"; name = "velocity", dim = 2)
+    u = Unknown("u"; name = "velocity", dim = d)
     p = Unknown("p"; name = "pressure", dim = 1)
     ϱ = Unknown("ϱ"; name = "density", dim = 1) # dummy, only referenced by convection kernels
 
     ## define FE types and reconstruction operator (same velocity space as run_single)
     if order == 1
-        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        FETypes = [H1BR{d}, L2P0{1}, L2P0{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{d} : reconstruct == :BDM ? HDIVBDM1{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
-        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        FETypes = [H1P2B{d, d}, L2P1{1}, L2P1{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{d} : reconstruct == :BDM ? HDIVBDM2{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     else
@@ -155,9 +157,9 @@ function run_incompressible!(data; kwargs...)
     if length(rhom) > 0
         assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
     end
-    if length(rinflow) > 0 || length(routflow) > 0
+    if length(rinflow) > 0 || length(routflow) > 0 || length(rwall) > 0
         assign_operator!(PD, InterpolateBoundaryData(
-            u, u!; bonus_quadorder, regions = union(rinflow, routflow), kwargs...))
+            u, u!; bonus_quadorder, regions = union(rinflow, routflow, rwall), kwargs...))
     end
 
     ## the problem is linear (convection kernels would use the exact u! and ϱ! = M);
@@ -171,12 +173,11 @@ function run_incompressible!(data; kwargs...)
 
     ## errors against exact solution (u = curl ξ / M, ϱ = M, p = 0 up to gauge)
     ErrorIntegratorExact = ItemIntegrator(
-        exact_error_incompressible!(u!, ∇u!, Float64(M)), [id(u), grad(u)];
-        resultdim = 6, quadorder = 10, kwargs...)
+        exact_error_incompressible!(u!, ∇u!, Float64(M); dim = d), [id(u), grad(u)];
+        resultdim = d + d*d, quadorder = 10, kwargs...)
     error = evaluate(ErrorIntegratorExact, sol)
-    data["Error(L2,u_inc)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
-    data["Error(H1,u_inc)"]  = sqrt(sum(error[3, :]) + sum(error[4, :]) +
-                                 sum(error[5, :]) + sum(error[6, :]))
+    data["Error(L2,u_inc)"]  = sqrt(sum(error[1:d, :]))
+    data["Error(H1,u_inc)"]  = sqrt(sum(error[d+1:d+d*d, :]))
 
     ## save data
     data["incompressible_solution"]  = sol
@@ -243,7 +244,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES,  kwargs...)
 
     # project current velocity to P0
-    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    FES_P0 = FESpace{L2P0{size(xgrid[Coordinates], 1)}}(xgrid)
     u0 = FEVector(FES_P0)    
     bconv = FEVector(FES_P0)
 
@@ -304,7 +305,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
         factor = -1, kwargs...))
          # project current velocity to P0
-    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    FES_P0 = FESpace{L2P0{size(xgrid[Coordinates], 1)}}(xgrid)
     u0 = FEVector(FES_P0)    
     bconv = FEVector(FES_P0)
 
@@ -317,7 +318,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             if isnothing(T)
                 T = compute_lazy_interpolation_jacobian(FES_P0, args[1].FES)
             end
-            lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = input[1]^2+input[2]^2;), quadorder = 4)
+            lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = sum(input[i]^2 for i in eachindex(input));), quadorder = 4)
 
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
             fill!(fluxes, 0)
@@ -400,30 +401,31 @@ function run_single(data; kwargs...)
     end
 
     ## prepare data and grid
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+    d = size(xgrid[Coordinates], 1)
     ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, convectiontype, τfac, nrefs, kwargs...)
-    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+                     ufac, convectiontype, τfac, nrefs, dim = d, kwargs...)
 
     M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
     τ = μ / (c * order^2 * M * τfac * ufac)
     @info "M = $M, M_exact = $M_exact τ = $τ"
 
     ## define unknowns
-    u = Unknown("u"; name = "velocity", dim = 2)
+    u = Unknown("u"; name = "velocity", dim = d)
     ϱ = Unknown("ϱ"; name = "density", dim = 1)
     p = Unknown("p"; name = "pressure", dim = 1)
 
     ## define FE types and reconstruction operator
     if order == 1
-        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        FETypes = [H1BR{d}, L2P0{1}, L2P0{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{d} : reconstruct == :BDM ? HDIVBDM1{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
-        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        FETypes = [H1P2B{d, d}, L2P1{1}, L2P1{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{d} : reconstruct == :BDM ? HDIVBDM2{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     end
@@ -435,8 +437,9 @@ function run_single(data; kwargs...)
     testgrid   = NumCompressibleFlows.grid(gridtype; nref = 1)
     rinflow    = inflow_regions(velocitytype, gridtype)
     routflow   = outflow_regions(velocitytype, gridtype)
-    rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
-    @info rinflow, routflow, rhom
+    rwall      = wall_regions(velocitytype, gridtype)
+    rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow, rwall))
+    @info rinflow, routflow, rwall, rhom
 
     ## define Stokes problem# name depending on convection type
     if convectiontype === NoConvection
@@ -472,9 +475,9 @@ function run_single(data; kwargs...)
     if length(rhom) > 0
         assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
     end
-    if length(rinflow) > 0 || length(routflow) > 0
+    if length(rinflow) > 0 || length(routflow) > 0 || length(rwall) > 0
         assign_operator!(PD, InterpolateBoundaryData(
-            u, u!; bonus_quadorder, regions = union(rinflow, routflow), kwargs...))
+            u, u!; bonus_quadorder, regions = union(rinflow, routflow, rwall), kwargs...))
     end
     if kernel_rhs! !== nothing
         assign_operator!(PD, LinearOperator(
@@ -648,6 +651,7 @@ function run_single(data; kwargs...)
     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     ## save data
+    data["dim"]      = d
     data["ndofs"]    = length(sol.entries)
     data["nits"]     = nits
     data["solution"] = sol

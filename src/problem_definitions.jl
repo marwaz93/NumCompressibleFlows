@@ -30,6 +30,8 @@ abstract type Mountain2D <: GridFamily end
 abstract type UnitSquare <: GridFamily end
 abstract type UniformUnitSquare <: UnitSquare end # no grid function yet
 abstract type UnstructuredUnitSquare <: UnitSquare end
+abstract type UnitCube <: GridFamily end
+abstract type UnstructuredUnitCube <: UnitCube end
 
 abstract type ConvectionType end
 abstract type NoConvection <: ConvectionType end
@@ -78,6 +80,24 @@ function grid(::Type{<:UniformUnitSquare}; nref = 1, kwargs...)
     return grid_builder(nref)
 end
 
+## tetrahedral grid of the unit cube via TetGen
+## boundary face regions: 1: y=0, 2: x=1, 3: y=1, 4: x=0, 5: z=0, 6: z=1
+function grid(::Type{<:UnstructuredUnitCube}; nref = 1, kwargs...)
+    grid_builder = (nref) -> SimplexGridFactory.simplexgrid(
+            TetGen;
+            points = [0 0 0; 1 0 0; 1 1 0; 0 1 0; 0 0 1; 1 0 1; 1 1 1; 0 1 1]',
+            bfaces = [1 2 6; 1 6 5; 2 3 7; 2 7 6; 3 4 8; 3 8 7; 4 1 5; 4 5 8; 1 2 3; 1 3 4; 5 6 7; 5 7 8]',
+            bfaceregions = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6],
+            regionpoints = [0.5 0.5 0.5]',
+            regionnumbers = [1],
+            regionvolumes = [8.0^-(nref) / 6]
+        )
+    return grid_builder(nref)
+end
+
+dim(::Type{<:GridFamily}) = 2
+dim(::Type{<:UnitCube}) = 3
+
 gamma(::Type{<:PowerLaw{γ}}) where {γ} = γ
 gamma(::Type{<:IdealGasLaw}) = 1
 
@@ -92,14 +112,24 @@ already_divfree(::Type{<:RigidBodyRotation}) = true
 
 inflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 inflow_regions(::Type{<:ConstantVelocity}, gridtype) = [1,3,4]
+inflow_regions(::Type{<:ConstantVelocity}, ::Type{<:UnitCube}) = [1,3,4,5,6]
 inflow_regions(::Type{<:LinearVelocity}, gridtype) = [3]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
+inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [1,2]
 outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 outflow_regions(::Type{<:ConstantVelocity}, gridtype) = [2]
-outflow_regions(::Type{<:LinearVelocity}, gridtype) = [2]
+outflow_regions(::Type{<:ConstantVelocity}, ::Type{<:UnitCube}) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
+outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [3,4]
+
+## boundary regions with u ⋅ n = 0 but (interpolated) Dirichlet velocity data
+## (e.g. the z-faces of the unit cube for the z-invariant embedded vortices,
+## where the exact velocity is tangential and nonzero)
+wall_regions(::Type{<:TestVelocity}, gridtype) = Int[]
+wall_regions(::Type{<:P7VortexVelocity}, ::Type{<:UnitCube}) = [5,6]
+wall_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [5,6]
 
 
 angular_velocity(::Type{<:NoCoriolis}; kwargs...) = 0*x
@@ -127,6 +157,7 @@ function prepare_data(
     convectiontype = NoConvection,
     coriolistype = NoCoriolis,
     incompressible = isinf(c),
+    dim = 2,
     kwargs...)
     
     ## get stream function and density for test types
@@ -134,50 +165,51 @@ function prepare_data(
     γ = gamma(EOSType)
     ξ = streamfunction(TVT;ufac = ufac, kwargs...)
     ϱ = incompressible ? M + 0*x : density(TDT; c = c, M = M, kwargs...)
-    
-    ## gradient of stream function
+    xs = dim == 2 ? [x, y] : [x, y, z]
+    ∂(f, v) = (g = Symbolics.gradient(f, [v]); isempty(g) ? 0 * x : g[1])
+
+    ## gradient of stream function (always in the (x,y)-plane)
     ∇ξ = Symbolics.gradient(ξ, [x, y])
 
     ## velocity u = curl ξ / ϱ 
-
     if already_divfree(TVT)
-        u = [-∇ξ[2], ∇ξ[1]]
+        u2 = [-∇ξ[2], ∇ξ[1]]
     else 
-        u = [-∇ξ[2], ∇ξ[1]] ./ ϱ
+        u2 = [-∇ξ[2], ∇ξ[1]] ./ ϱ
     end
-    #u = [-∇ξ[2], ∇ξ[1]] ./ ϱ
-    ## gradient of velocity
-    ∇u = Symbolics.jacobian(u, [x, y])
-    ∇u_reshaped = [∇u[1, 1], ∇u[1, 2], ∇u[2, 1], ∇u[2, 2]] # [∇u1,∇u2]
+    ## in 3D the planar field is embedded (z-invariant) as u = (u1, u2, 0),
+    ## which is still exactly divergence-free
+    u = dim == 2 ? u2 : [u2[1], u2[2], 0 * x]
+
+    ## gradient of velocity (row-major: [∇u_1, ∇u_2, (∇u_3)] matching grad(u) layout)
+    ∇u = Symbolics.jacobian(u, xs)
+    ∇u_reshaped = [∇u[i, j] for i in 1:dim for j in 1:dim]
 
     ## Laplacian
-    Δu = [
-        (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[1, 2], [y]))[1],
-        (Symbolics.gradient(∇u[2, 1], [x]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
-    ]
+    Δu = [sum(∂(∇u[i, j], xs[j]) for j in 1:dim) for i in 1:dim]
     ## for the λ∇(∇⋅u) term 
-    ∇divu = [
-        (Symbolics.gradient(∇u[1, 1], [x]) + Symbolics.gradient(∇u[2, 2], [x]))[1],
-        (Symbolics.gradient(∇u[1, 1], [y]) + Symbolics.gradient(∇u[2, 2], [y]))[1],
-    ]
+    divu = sum(∇u[k, k] for k in 1:dim)
+    ∇divu = [∂(divu, xs[i]) for i in 1:dim]
 
     ## for the convection term ϱ(u ⋅∇)u
     if convectiontype !== NoConvection
-        conv = [ u[1] * ∇u[1, 1] + u[2] * ∇u[1, 2],
-                 u[1] * ∇u[2, 1] + u[2] * ∇u[2, 2] ] .* ϱ
+        conv = [ϱ * sum(u[j] * ∇u[i, j] for j in 1:dim) for i in 1:dim]
     else
-        conv = [0*x, 0*x]
+        conv = [0 * x for _ in 1:dim]
     end
 
     if coriolistype !== NoCoriolis
+        if dim == 3
+            @error "Coriolis terms are only supported in 2D so far (β-plane)."
+        end
         ω = angular_velocity(coriolistype; kwargs...)
         conv += 2*ϱ*ω*[-u[2],  u[1]] # Marwa 30 May: conv += 2*ϱ*ω*[u[2], - u[1]] ? 
     end
     
 
     # L(u) + ∇p = f + ϱg with L(u) = -μ Δu - λ ∇(∇⋅u) + ϱ(u.∇)u 
-    f = [0*x, 0*x]
-    g = [0*x, 0*x]
+    f = [0 * x for _ in 1:dim]
+    g = [0 * x for _ in 1:dim]
     if incompressible
         # in the limit c → Inf the manufactured density is constant (ϱ = M) and
         # all pressure-gradient terms ∇p = c∇ϱ (or c∇ϱ^γ, and ϱg = ∇p in the
@@ -186,7 +218,7 @@ function prepare_data(
         # incompressible problem and do not change the exact velocity
     elseif pressure_in_f # Gradient_robustness 
         if EOSType <: IdealGasLaw && γ == 1
-            f = c * Symbolics.gradient(ϱ, [x, y]) # f = ∇p
+            f = c * Symbolics.gradient(ϱ, xs) # f = ∇p
         elseif EOSType <: IdealGasLaw && γ > 1
             @error "IdealGasLaw with γ > 1 is not supported, please change to PowerLaw{γ}."
         elseif EOSType <: PowerLaw || γ > 1
@@ -194,47 +226,56 @@ function prepare_data(
                 γ = EOSType.parameters[1]
             end
             @assert γ > 1
-            f =  c * Symbolics.gradient(ϱ^γ, [x, y]) # f = ∇p
+            f =  c * Symbolics.gradient(ϱ^γ, xs) # f = ∇p
         end
     else # Well_balancedness 
         if EOSType <: IdealGasLaw && γ == 1
-            g = c * Symbolics.gradient(log(ϱ), [x, y]) # ϱg = ∇p  
+            g = c * Symbolics.gradient(log(ϱ), xs) # ϱg = ∇p  
         elseif EOSType <: PowerLaw || γ > 1
             if EOSType <: PowerLaw
                 γ = EOSType.parameters[1]
             end
             @assert γ > 1
-            g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, [x, y]) # ϱg = ∇p 
+            g =  c* γ*ϱ^(γ-2) * Symbolics.gradient(ϱ, xs) # ϱg = ∇p 
         end
     end
 
     if others_in_f
         f += - μ * Δu - λ*∇divu + conv   # f also has L(u) 
     else
-        g += - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg also has L(u)
+        g += - μ * Δu / ϱ - λ*∇divu / ϱ + conv /ϱ  # ϱg also has L(u) 
     end
 
     @info "conv [$convectiontype] = ", conv
     @info "f = ", f
     @info "g = ", g
 
-    ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
-    u_eval = build_function(u, x, y, expression = Val{false})[2]
-    ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})[2]
-    g_eval = build_function(g, x, y, expression = Val{false})[2]
-    f_eval = build_function(f, x, y, expression = Val{false})[2]
+    if dim == 2
+        ϱ_eval = build_function(ϱ, x, y, expression = Val{false})
+        u_eval = build_function(u, x, y, expression = Val{false})[2]
+        ∇u_eval = build_function(∇u_reshaped, x, y, expression = Val{false})[2]
+        g_eval = build_function(g, x, y, expression = Val{false})[2]
+        f_eval = build_function(f, x, y, expression = Val{false})[2]
+    else
+        ϱ_eval = build_function(ϱ, x, y, z, expression = Val{false})
+        u_eval = build_function(u, x, y, z, expression = Val{false})[2]
+        ∇u_eval = build_function(∇u_reshaped, x, y, z, expression = Val{false})[2]
+        g_eval = build_function(g, x, y, z, expression = Val{false})[2]
+        f_eval = build_function(f, x, y, z, expression = Val{false})[2]
+    end
+    coords(qpinfo) = dim == 2 ? (qpinfo.x[1], qpinfo.x[2]) : (qpinfo.x[1], qpinfo.x[2], qpinfo.x[3])
 
-    ϱ!(result, qpinfo) = (result[1] = ϱ_eval(qpinfo.x[1], qpinfo.x[2]);)
+    ϱ!(result, qpinfo) = (result[1] = ϱ_eval(coords(qpinfo)...);)
     function kernel_gravity!(result, input, qpinfo)
-        g_eval(result, qpinfo.x[1], qpinfo.x[2]) # qpinfo.x[1] is x and qpinfo.x[2] is y
+        g_eval(result, coords(qpinfo)...) # qpinfo.x[1] is x, qpinfo.x[2] is y, (qpinfo.x[3] is z)
         return result .*= input[1] # multiply with discrete density ϱ
     end
     function kernel_rhs!(result, qpinfo)
-        return f_eval(result, qpinfo.x[1], qpinfo.x[2])
+        return f_eval(result, coords(qpinfo)...)
     end
 
-    u!(result, qpinfo) = (u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
-    ∇u!(result, qpinfo) = (∇u_eval(result, qpinfo.x[1], qpinfo.x[2]);)
+    u!(result, qpinfo) = (u_eval(result, coords(qpinfo)...);)
+    ∇u!(result, qpinfo) = (∇u_eval(result, coords(qpinfo)...);)
     return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!
 end
 

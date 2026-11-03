@@ -3,6 +3,7 @@ module NumCompressibleFlows
 using ExtendableFEM
 using ExtendableGrids
 using Triangulate
+import TetGen
 using SimplexGridFactory
 using GridVisualize
 using Symbolics: Symbolics, @variables, build_function
@@ -28,7 +29,8 @@ export ConvectionType, NoConvection, StandardConvection, OseenConvection, Rotati
 export UpwindType, StandardUpwind, PointwiseUpwind
 export CoriolisType, NoCoriolis, BetaPlaneApproximation
 export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
-export inflow_regions, outflow_regions
+export UnitCube, UnstructuredUnitCube, dim
+export inflow_regions, outflow_regions, wall_regions
 export grid
 export prepare_data, run_single
 export default_args, load_data, run_incompressible!

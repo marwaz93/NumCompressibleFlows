@@ -80,7 +80,9 @@ function setup_study!(studyname; plot_folders = [""])
         etype   = ("eostype",        "Law" => ""),  # carries γ, e.g. Power{1.4}
         gtype   = ("gridtype",       ["UnstructuredUnitSquare" => "SquareUnstruct",
                                       "UniformUnitSquare" => "SquareUniform",
-                                      "UnitSquare" => "Square"]),
+                                      "UnstructuredUnitCube" => "CubeUnstruct",
+                                      "UnitSquare" => "Square",
+                                      "UnitCube" => "Cube"]),
         ctype   = ("convectiontype", "Convection" => "Conv"),
         uptype  = ("upwindtype",     "Upwind" => "Upw"),
         cortype = ("coriolistype",   "Coriolis" => "Cor"),
