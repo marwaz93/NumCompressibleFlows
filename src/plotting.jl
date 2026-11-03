@@ -564,7 +564,7 @@ function plot_parameter_study(; param = :convectiontype, values = nothing, nrefs
     xlimv = logx ? (xticks[1], xticks[end]) : let lo = minimum(reduce(vcat, [s.x for s in series])), hi = maximum(reduce(vcat, [s.x for s in series])), w = max(hi - lo, oneunit(hi))
         (lo - 0.05w, hi + 0.05w)
     end
-    Plotter.plot!(; legend = :best, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = xlimv, xlabel = xlabelv, gridalpha = 0.7, grid = true, background_color_legend = RGBA(1,1,1,0.7))
+    Plotter.plot!(; legend = :bottomleft, xtick = xticks, yticks = yticks, ylim = (yticks[1]/2, 2*yticks[end]), xlim = xlimv, xlabel = xlabelv, gridalpha = 0.7, grid = true, background_color_legend = RGBA(1,1,1,0.7))
 
     ## save: filename freezes all study parameters except the swept field and
     ## nrefs (done by the pipeline's filename_plots via free_parameter = key)

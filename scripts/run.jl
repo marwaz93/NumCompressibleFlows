@@ -12,7 +12,8 @@
 # its errors, mode=plot draws the convergence history of every given
 # convection type and a comparison plot of all of them from existing data
 # files (configurations with missing levels are skipped, never recomputed).
-# Optional arguments: c=1000, reconstruct=RT|BDM|none. All parameters not
+# Optional arguments: c=1000, reconstruct=RT|BDM|none, taufac=1 (the pseudo
+# time step is τ = μ / (c * order^2 * M * τfac * ufac)). All parameters not
 # given here are the defaults of default_args in src/compressible_stokes.jl
 # (so that the data filenames match those of the study scripts).
 
@@ -80,6 +81,7 @@ end
 const OPTIONAL_ARGUMENTS = Dict(
     "c" => (:c, parse_number),
     "reconstruct" => (:reconstruct, parse_reconstruct),
+    "taufac" => (:τfac, parse_number),
 )
 
 function parse_arguments(args)

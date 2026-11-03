@@ -18,10 +18,17 @@ nrefs_max=9
 
 ## memory per refinement level (each level has about 4 times the unknowns of the previous one),
 ## optional second argument: convectiontype (KarperConvection needs far more memory,
-## it went over 16GB on level 8 and over 48GB on level 9)
+## it went over 16GB on level 8 and over 48GB on level 9; RotationForm went over 48GB on
+## level 9 and NewConvection uses the same P0 lifting as KarperConvection since PR #6:
+## after PR #6 NewConvection went over 128GB on level 9, KarperConvection with
+## reconstruct=none over 64GB on level 8)
 memory() {
     if [ "$2" = "KarperConvection" ] && [ "$1" -ge 8 ]; then
-        if [ "$1" -eq 8 ]; then echo 64GB; else echo 256GB; fi
+        if [ "$1" -eq 8 ]; then echo 128GB; else echo 256GB; fi
+    elif [ "$2" = "NewConvection" ] && [ "$1" -ge 8 ]; then
+        if [ "$1" -eq 8 ]; then echo 64GB; else echo 384GB; fi
+    elif [ "$2" = "RotationForm" ] && [ "$1" -ge 8 ]; then
+        if [ "$1" -eq 8 ]; then echo 64GB; else echo 128GB; fi
     elif [ "$1" -le 6 ]; then echo 4GB
     elif [ "$1" -eq 7 ]; then echo 8GB
     elif [ "$1" -eq 8 ]; then echo 16GB
