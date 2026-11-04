@@ -39,7 +39,8 @@ function run_study(;
     λ = 0,
     c = 1,
     M = 1,
-    τfac = 4,
+    τfac = 0.5,          # pseudo-time step τ = 2 (stable up to τ ≈ 3, mesh- and
+                         # μ-independent; τ = 0.25 converges only after >3e4 steps on tets)
     ufac = 1,
     # discretization options
     order = 1,
@@ -102,7 +103,8 @@ function run_comparison(;
     λ = 0,
     c = 1,
     M = 1,
-    τfac = 4,
+    τfac = 0.5,          # pseudo-time step τ = 2 (stable up to τ ≈ 3, mesh- and
+                         # μ-independent; τ = 0.25 converges only after >3e4 steps on tets)
     ufac = 1,
     order = 1,
     reconstruct = :RT,           # :RT, :BDM or :none (overwritten if swept)

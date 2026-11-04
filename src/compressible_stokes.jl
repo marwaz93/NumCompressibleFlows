@@ -9,7 +9,10 @@ const default_args = Dict(
     "c" => 1,
     "M" => 1,
     # solving options
-    "τfac" => 4,
+    "τfac" => 4, # pseudo-time step τ = μ/(c·order²·M·τfac·ufac); on 3D tets the
+                 # fixed-point iteration slows down drastically for the 2D-default
+                 # τ ≈ 0.25 and destabilizes for τ ≳ 3 (mesh- and μ-independent,
+                 # empirical; the 3D study scripts therefore use τfac = 0.5, τ = 2)
     "ufac" => 1,
     "nrefs" => 4,
     "order" => 1,
