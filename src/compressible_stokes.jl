@@ -26,6 +26,8 @@ const default_args = Dict(
     "reconstruct" => :RT, # choose from :RT :BDM :none
     "initial_values" => :interpolate, # choose from :interpolate, :stokes,
     "no_continuity_update" => false,
+    "mass_balance" => false, # add a uniform density source lambda to the continuity equation (discrete Lagrange multiplier for mass) so that the steady state carries exactly M_exact; all boundary data stay untouched
+    "mass_kappa" => 1.0, # relaxation factor with which the mass defect is removed per pseudo-time step (0 < mass_kappa <= 1)
     # data of the problem
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
@@ -444,6 +446,24 @@ function run_single(data; kwargs...)
     rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow, rwall))
     @info rinflow, routflow, rwall, rhom
 
+    ## mass balance correction: at the discrete steady state the inflow rate
+    ## (from the Dirichlet data rho!) and the outflow rate (upwind from rho_h)
+    ## always balance (row-sum identity of D), but the unique steady solution
+    ## of the upwind FVM still carries an O(h) mass defect: the defect is
+    ## accumulated during the pseudo-time transient while the density profile
+    ## relaxes. Since the steady solution is unique, exact mass preservation
+    ## requires one additional (O(h), consistency-preserving) term. If
+    ## requested, a uniform density source lambda is added to the continuity
+    ## equation, updated each pseudo-step so that the mass defect decays by
+    ## the factor (1 - mass_kappa); at the fixed point it acts as a discrete
+    ## Lagrange multiplier enforcing total mass = M_exact, while all boundary
+    ## data (Dirichlet inflow density rho!, outflow upwinding) remain untouched
+    mass_balance = get(data, "mass_balance", false)
+    mass_kappa = get(data, "mass_kappa", 1.0)
+    mass_lambda = Ref(0.0)
+    cell_vols = xgrid[CellVolumes]
+    total_vol = sum(cell_vols)
+
     ## define Stokes problem# name depending on convection type
     if convectiontype === NoConvection
         pdname = "Compressible Stokes problem"
@@ -531,6 +551,11 @@ function run_single(data; kwargs...)
     * update inflow source vector `brho` and outflow matrix correction from boundary data
     * updates jump stabilisation on interior faces (`stab1`) and mean-density
       stabilisation pulling toward `rho_mean` (`stab2`)
+    * if `mass_balance`: adds a uniform source `lambda` (per unit volume) to
+      `brho` so that the total mass decays toward `M_exact` by the factor
+      `(1 - mass_kappa)` per pseudo-step (`lambda` balances inflow/outflow
+      rates and mass defect; at the fixed point it is the discrete Lagrange
+      multiplier enforcing mass conservation)
     * accumulates `A += τ·D`, `b += τ·brho` → implicit step `(I + τD)ϱ = b`
       with time-step `tau = min(V_cell / ‖rowsum(D)‖) / 2`
     """
@@ -594,6 +619,20 @@ function run_single(data; kwargs...)
                 [id(1)]; factor = hmean^stab2[1]*rho_mean*stab2[2], kwargs...))
         end
 
+        ## mass balance correction: uniform source lambda (per unit volume) on
+        ## all cells such that the realized mass change of this pseudo-step
+        ## removes mass_kappa of the current mass defect, i.e.
+        ##   dM = tau * (in - out) + tau * lambda * |Omega| = -kappa * (M - M_exact)
+        ## interior upwind fluxes and jump stabilizations cancel in the row
+        ## sums, so sum(D * rho) is exactly the discrete outflow rate and
+        ## sum(brho) the discrete inflow rate at the current iterate
+        if mass_balance
+            M_now = dot(cell_vols, view(sol[ϱ]))
+            imb = sum(brho.entries) - sum(D.entries * view(sol[ϱ]))
+            mass_lambda[] = (-mass_kappa * (M_now - M_exact) - tau * imb) / (tau * total_vol)
+            brho.entries .+= mass_lambda[] * cell_vols
+        end
+
         ExtendableFEMBase.add!(A, D.entries; factor = tau)
         b .+= tau * brho.entries
     end
@@ -651,6 +690,11 @@ function run_single(data; kwargs...)
 
     ## calculate mass conservation
     Mend    = sum(evaluate(MassIntegrator, sol))
+    data["M_exact"] = M_exact
+    data["M_start"] = M_start
+    data["M_end"] = Mend
+    data["M_difference"] = M_start - Mend
+    mass_balance && (data["mass_lambda"] = mass_lambda[])
     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     ## save data
