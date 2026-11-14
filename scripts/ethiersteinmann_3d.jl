@@ -16,7 +16,7 @@
 # defaults a = pi/4, d = pi/2 the flow enters through x=1, y=1, z=1 and leaves
 # through x=0, y=0, z=0, so all six faces carry inhomogeneous Dirichlet velocity
 # data and the characteristics are open (no closed-orbit density kernel as for
-# the P11 vortex). All three velocity components are nonzero and max|u| = O(ufac).
+# embedded planar vortices). All three velocity components are nonzero and max|u| = O(ufac).
 # Runs in its own study folder (data/ethiersteinmann_3d,
 # plots/ethiersteinmann_3d/convergence_history). Including this file only defines
 # run_study() and run_comparison(), nothing is computed yet. Run e.g.
@@ -43,13 +43,13 @@ passed through to `plot_convergencehistory` / `load_data`.
 function run_study(;
     # problem parameters (defaults = settings of the converged convergence study:
     # mu=1e-3, ufac=0.4, PowerLaw{1.4}, stab1=(0.9,0.01), mass_balance=true;
-    # tau-fac 2.0 for levels 1-3, use taufac = 8.0 for level 4)
+    # tau-fac = 8.0 converges on all levels 1-4; levels 1-3 converge faster with τfac = 2.0)
     nrefs = 1:4,
     μ = 1.0e-3,
     λ = 0,
     c = 1,
     M = 1,
-    τfac = 2.0,            # pseudo-time step τ = μ/(c·order²·M·τfac·ufac); the
+    τfac = 8.0,            # pseudo-time step τ = μ/(c·order²·M·τfac·ufac); the
                            # upwind CFL bound in the callback limits it further for
                            # the O(ufac) fluxes of this example
     ufac = 0.4,
@@ -116,7 +116,7 @@ function run_comparison(;
     λ = 0,
     c = 1,
     M = 1,
-    τfac = 2.0,
+    τfac = 8.0,
     ufac = 0.4,
     order = 1,
     reconstruct = :RT,           # :RT, :BDM or :none (overwritten if swept)

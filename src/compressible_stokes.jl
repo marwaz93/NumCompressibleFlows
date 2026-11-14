@@ -628,9 +628,10 @@ function run_single(data; kwargs...)
         ## sum(brho) the discrete inflow rate at the current iterate
         if mass_balance
             M_now = dot(cell_vols, view(sol[ϱ]))
-            imb = sum(brho.entries) - sum(D.entries * view(sol[ϱ]))
+            mul!(rowsums, D.entries, view(sol[ϱ]))
+            imb = sum(brho.entries) - sum(rowsums)
             mass_lambda[] = (-mass_kappa * (M_now - M_exact) - tau * imb) / (tau * total_vol)
-            brho.entries .+= mass_lambda[] * cell_vols
+            @. brho.entries += mass_lambda[] * cell_vols
         end
 
         ExtendableFEMBase.add!(A, D.entries; factor = tau)

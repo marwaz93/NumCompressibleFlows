@@ -21,7 +21,6 @@ abstract type ConstantVelocity <: TestVelocity end
 abstract type LinearVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
 abstract type RigidBodyRotation <: TestVelocity end
-abstract type P11VortexVelocity <: TestVelocity end
 abstract type TrigVortexVelocity <: TestVelocity end
 abstract type EthierSteinmannVelocity <: TestVelocity end
 
@@ -110,10 +109,6 @@ streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:LinearVelocity};ufac = 1, kwargs...) = -  ufac * x * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2)
-## 3D-only vortex (dim = 3): ξ = ufac ∏ (xᵢ²(xᵢ-1)²) vanishes with all first
-## derivatives on the cube boundary, and the embedded curl u = (-∂yξ, ∂xξ, 0)/ϱ
-## (see prepare_data) therefore vanishes on ∂Ω in every component
-streamfunction(::Type{<:P11VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * z^2 * (z - 1)^2
 
 ## vector stream functions Ψ for genuinely 3D manufactured velocities
 ## u = curl Ψ / ϱ via the 3D curl (see prepare_data); ϱu = curl Ψ is exactly
@@ -126,7 +121,7 @@ vector_streamfunction(::Type{<:TestVelocity}; kwargs...) = error("no vector stre
 ## On the unit cube every component is >= 0, so the flow enters exactly through
 ## the faces x=0, y=0, z=0 (inflow), leaves through x=1, y=1, z=1 (outflow), and
 ## all characteristics are open rings-free segments - no closed-orbit density
-## kernel as for the P7/P11 vortices. max|u| = sqrt(3) ufac / min ϱ = O(ufac).
+## kernel as for the P7 vortex. max|u| = sqrt(3) ufac / min ϱ = O(ufac).
 vector_streamfunction(::Type{<:TrigVortexVelocity};ufac = 1, kwargs...) = (ufac/pi) * [cos(pi * y), cos(pi * z), cos(pi * x)]
 is_vector_stream(::Type{<:TrigVortexVelocity}) = true
 
@@ -177,7 +172,6 @@ inflow_regions(::Type{<:LinearVelocity}, gridtype) = [3]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [1,2]
-inflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
 ## TrigVortexVelocity (unit cube, regions 1:y=0,2:x=1,3:y=1,4:x=0,5:z=0,6:z=1):
 ## u ∝ (sin πz, sin πx, sin πy) >= 0 enters through x=0,y=0,z=0 and leaves through
 ## x=1,y=1,z=1; all six faces carry Dirichlet velocity data (none are walls)
@@ -192,7 +186,6 @@ outflow_regions(::Type{<:ConstantVelocity}, ::Type{<:UnitCube}) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [3,4]
-outflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:TrigVortexVelocity}, ::Type{<:UnitCube}) = [2,3,6]
 outflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [4,1,5]
 
@@ -214,9 +207,7 @@ density(::Type{<:ExponentialDensityRBR}; c = 1, M = 1, kwargs...) =  M * exp( (x
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 density(::Type{<:ConstantDensity}; c = 1, M = 1, kwargs...) = M 
 ## 3D-only (dim = 3): constant in (x,y), exponential in z (isothermal atmosphere,
-## ∇log ϱ = -e_z/c, so the well-balanced gravity is g = -e_z); since the P11 vortex
-## characteristics are closed rings in horizontal planes, this ϱ is constant on every
-## characteristic and lies in the (per-ring) kernel of the upwind continuity operator
+## ∇log ϱ = -e_z/c, so the well-balanced gravity is g = -e_z)
 density(::Type{<:ExponentialZDensity}; c = 1, M = 1, kwargs...) = M * exp((1/2 - z) / c)
 
 
@@ -258,7 +249,7 @@ function prepare_data(
     else
         ξ = streamfunction(TVT;ufac = ufac, kwargs...)
         if dim == 2 && (z in Symbolics.get_variables(ξ) || z in Symbolics.get_variables(ϱ))
-            error("test data with z-dependence (e.g. P11VortexVelocity, ExponentialZDensity) require dim = 3")
+            error("test data with z-dependence (e.g. ExponentialZDensity) require dim = 3")
         end
         ## gradient of stream function (always in the (x,y)-plane)
         ∇ξ = Symbolics.gradient(ξ, [x, y])

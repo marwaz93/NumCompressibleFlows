@@ -8,9 +8,9 @@
 # nonzero (in particular u3 ≠ 0). On the unit cube every component is >= 0: the
 # flow enters through x=0, y=0, z=0 (inflow regions 4,1,5) and leaves through
 # x=1, y=1, z=1 (outflow regions 2,3,6); all characteristics are open segments
-# (no closed-orbit density kernel, unlike the P7/P11 vortices), and max|u| = O(ufac)
+# (no closed-orbit density kernel, unlike the embedded planar P7 vortex), and max|u| = O(ufac)
 # (sqrt(3)/min ϱ). This example converges also for NoConvection and large c,
-# where the closed-ring P11 vortex fails (velocity error dominated by the
+# where closed-ring vortices fail (velocity error dominated by the
 # c-amplified pressure response to the discrete density).
 # Runs in its own study folder (data/trigvortex_3d,
 # plots/trigvortex_3d/convergence_history). Including this file only defines
