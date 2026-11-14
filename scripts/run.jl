@@ -40,6 +40,12 @@ const EXAMPLES = Dict(
         eostype = PowerLaw{1.4},
         gridtype = UnstructuredUnitCube,
     ),
+    "p11vortex_3d" => (
+        velocitytype = P11VortexVelocity,
+        densitytype = ExponentialZDensity,
+        eostype = IdealGasLaw,
+        gridtype = UnstructuredUnitCube,
+    ),
     "rigidbodyrotation" => (
         velocitytype = RigidBodyRotation,
         densitytype = ExponentialDensityRBR,

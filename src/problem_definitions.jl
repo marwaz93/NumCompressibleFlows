@@ -13,6 +13,7 @@ abstract type ConstantDensity <: TestDensity end
 abstract type LinearDensity <: TestDensity end
 abstract type ExponentialDensity <: TestDensity end
 abstract type ExponentialDensityRBR <: TestDensity end
+abstract type ExponentialZDensity <: TestDensity end
 
 abstract type TestVelocity end
 abstract type ZeroVelocity <: TestVelocity end
@@ -20,6 +21,9 @@ abstract type ConstantVelocity <: TestVelocity end
 abstract type LinearVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
 abstract type RigidBodyRotation <: TestVelocity end
+abstract type P11VortexVelocity <: TestVelocity end
+abstract type TrigVortexVelocity <: TestVelocity end
+abstract type EthierSteinmannVelocity <: TestVelocity end
 
 abstract type EOSType end
 abstract type IdealGasLaw <: EOSType end
@@ -90,7 +94,7 @@ function grid(::Type{<:UnstructuredUnitCube}; nref = 1, kwargs...)
             bfaceregions = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6],
             regionpoints = [0.5 0.5 0.5]',
             regionnumbers = [1],
-            regionvolumes = [8.0^-(nref) / 6]
+            regionvolumes = [8.0^-(nref)]
         )
     return grid_builder(nref)
 end
@@ -106,6 +110,62 @@ streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:LinearVelocity};ufac = 1, kwargs...) = -  ufac * x * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2)
+## 3D-only vortex (dim = 3): ξ = ufac ∏ (xᵢ²(xᵢ-1)²) vanishes with all first
+## derivatives on the cube boundary, and the embedded curl u = (-∂yξ, ∂xξ, 0)/ϱ
+## (see prepare_data) therefore vanishes on ∂Ω in every component
+streamfunction(::Type{<:P11VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * z^2 * (z - 1)^2
+
+## vector stream functions Ψ for genuinely 3D manufactured velocities
+## u = curl Ψ / ϱ via the 3D curl (see prepare_data); ϱu = curl Ψ is exactly
+## divergence-free. Default: not supported (only the 2D-curl `streamfunction` above)
+is_vector_stream(::Type{<:TestVelocity}) = false
+vector_streamfunction(::Type{<:TestVelocity}; kwargs...) = error("no vector stream function defined for this velocity type")
+
+## 3D trigonometric vortex (dim = 3): Ψ = (ufac/π)(cos πy, cos πz, cos πx), i.e.
+## ϱu = curl Ψ = ufac (sin πz, sin πx, sin πy) with all three components nonzero.
+## On the unit cube every component is >= 0, so the flow enters exactly through
+## the faces x=0, y=0, z=0 (inflow), leaves through x=1, y=1, z=1 (outflow), and
+## all characteristics are open rings-free segments - no closed-orbit density
+## kernel as for the P7/P11 vortices. max|u| = sqrt(3) ufac / min ϱ = O(ufac).
+vector_streamfunction(::Type{<:TrigVortexVelocity};ufac = 1, kwargs...) = (ufac/pi) * [cos(pi * y), cos(pi * z), cos(pi * x)]
+is_vector_stream(::Type{<:TrigVortexVelocity}) = true
+
+## Ethier-Steinmann-type example (dim = 3, nonzero Dirichlet data on all faces):
+## v_ES = -a * (e^(ax) sin(ay + dz) + e^(az) cos(ax + dy),
+##              e^(ay) sin(az + dx) + e^(ax) cos(ay + dz),
+##              e^(az) sin(ax + dy) + e^(ay) cos(az + dx))   (defaults a = pi/4, d = pi/2)
+## is the classical Ethier-Steinmann solution of the Stokes equations (Ethier &
+## Steinmann, IJNMF 1994) without its decay factor exp(-d^2*t): the steady solver
+## has no time variable, and a free t in u, f or g would make
+## build_function(u, x, y, z) in prepare_data fail; restore the factor in u AND
+## Psi only together with a transient MMS. v_ES is exactly divergence-free, the
+## pressure and the remaining Stokes residuals are absorbed into the
+## manufactured force by prepare_data).
+## The vector stream function is a vector POTENTIAL of v_ES built from the same
+## cyclic cosine factors,
+##   Psi_ES = (e^(ay) cos(az + dx), e^(az) cos(ax + dy), e^(ax) cos(ay + dz)),
+## which satisfies curl Psi_ES = v_ES exactly (unique only up to a gauge grad chi),
+## so the manufactured momentum flux
+##   rho u = ufac curl Psi_ES = ufac v_ES,   u = curl Psi_ES / rho,
+## is exactly divergence-free. On the unit cube with the defaults a = pi/4,
+## d = pi/2 (a + d < pi keeps every face trace of one sign) the flow enters
+## through x=1, y=1, z=1 (inflow; n.v = 0 only at the corner (1,1,1)) and leaves
+## strictly through x=0, y=0, z=0 (outflow), so all six faces carry
+## inhomogeneous Dirichlet velocity data and the characteristics are open.
+ethier_steinmann_velocity(; a = pi/4, d = pi/2, ufac = 1) = ufac * [
+    -a * (exp(a * x) * sin(a * y + d * z) + exp(a * z) * cos(a * x + d * y)),
+    -a * (exp(a * y) * sin(a * z + d * x) + exp(a * x) * cos(a * y + d * z)),
+    -a * (exp(a * z) * sin(a * x + d * y) + exp(a * y) * cos(a * z + d * x)),
+]
+## vector potential: curl ethier_steinmann_potential(...) = ethier_steinmann_velocity(...)
+ethier_steinmann_potential(; a = pi/4, d = pi/2, ufac = 1) = ufac * [
+    exp(a * y) * cos(a * z + d * x),
+    exp(a * z) * cos(a * x + d * y),
+    exp(a * x) * cos(a * y + d * z),
+]
+vector_streamfunction(::Type{<:EthierSteinmannVelocity}; ufac = 1, a = pi/4, d = pi/2, kwargs...) =
+    ethier_steinmann_potential(; a = a, d = d, ufac = ufac)
+is_vector_stream(::Type{<:EthierSteinmannVelocity}) = true
 
 already_divfree(::Type{<:TestVelocity}) = false
 already_divfree(::Type{<:RigidBodyRotation}) = true
@@ -117,12 +177,24 @@ inflow_regions(::Type{<:LinearVelocity}, gridtype) = [3]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [1,2]
+inflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
+## TrigVortexVelocity (unit cube, regions 1:y=0,2:x=1,3:y=1,4:x=0,5:z=0,6:z=1):
+## u ∝ (sin πz, sin πx, sin πy) >= 0 enters through x=0,y=0,z=0 and leaves through
+## x=1,y=1,z=1; all six faces carry Dirichlet velocity data (none are walls)
+inflow_regions(::Type{<:TrigVortexVelocity}, ::Type{<:UnitCube}) = [4,1,5]
+## EthierSteinmannVelocity (unit cube, regions 1:y=0,2:x=1,3:y=1,4:x=0,5:z=0,6:z=1):
+## u ∝ v_ES enters through x=1,y=1,z=1 and leaves through x=0,y=0,z=0 (defaults a = pi/4,
+## d = pi/2); all six faces carry nonzero Dirichlet velocity data (none are walls)
+inflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [2,3,6]
 outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 outflow_regions(::Type{<:ConstantVelocity}, gridtype) = [2]
 outflow_regions(::Type{<:ConstantVelocity}, ::Type{<:UnitCube}) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [3,4]
+outflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
+outflow_regions(::Type{<:TrigVortexVelocity}, ::Type{<:UnitCube}) = [2,3,6]
+outflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [4,1,5]
 
 ## boundary regions with u ⋅ n = 0 but (interpolated) Dirichlet velocity data
 ## (e.g. the z-faces of the unit cube for the z-invariant embedded vortices,
@@ -141,6 +213,11 @@ density(::Type{<:ExponentialDensity}; c = 1, M = 1, kwargs...) = M *  exp(- y^3 
 density(::Type{<:ExponentialDensityRBR}; c = 1, M = 1, kwargs...) =  M * exp( (x^2+y^2) /  (2*c)) 
 density(::Type{<:LinearDensity}; c = 1, M = 1, kwargs...) = ( 1+(x-(1/2))/c )/M 
 density(::Type{<:ConstantDensity}; c = 1, M = 1, kwargs...) = M 
+## 3D-only (dim = 3): constant in (x,y), exponential in z (isothermal atmosphere,
+## ∇log ϱ = -e_z/c, so the well-balanced gravity is g = -e_z); since the P11 vortex
+## characteristics are closed rings in horizontal planes, this ϱ is constant on every
+## characteristic and lies in the (per-ring) kernel of the upwind continuity operator
+density(::Type{<:ExponentialZDensity}; c = 1, M = 1, kwargs...) = M * exp((1/2 - z) / c)
 
 
 function prepare_data(
@@ -163,23 +240,38 @@ function prepare_data(
     ## get stream function and density for test types
     ## in the incompressible limit (c = Inf) the density is the constant ϱ = M
     γ = gamma(EOSType)
-    ξ = streamfunction(TVT;ufac = ufac, kwargs...)
     ϱ = incompressible ? M + 0*x : density(TDT; c = c, M = M, kwargs...)
     xs = dim == 2 ? [x, y] : [x, y, z]
     ∂(f, v) = (g = Symbolics.gradient(f, [v]); isempty(g) ? 0 * x : g[1])
 
-    ## gradient of stream function (always in the (x,y)-plane)
-    ∇ξ = Symbolics.gradient(ξ, [x, y])
-
-    ## velocity u = curl ξ / ϱ 
-    if already_divfree(TVT)
-        u2 = [-∇ξ[2], ∇ξ[1]]
-    else 
-        u2 = [-∇ξ[2], ∇ξ[1]] ./ ϱ
+    if is_vector_stream(TVT)
+        ## genuinely 3D velocity from the curl of a vector stream function Ψ:
+        ## u = curl Ψ / ϱ, so that ϱu = curl Ψ is exactly divergence-free
+        dim == 3 || error("vector stream functions (3D curl) require dim = 3")
+        Ψ = vector_streamfunction(TVT;ufac = ufac, kwargs...)
+        curlΨ = [
+            ∂(Ψ[3], xs[2]) - ∂(Ψ[2], xs[3]),
+            ∂(Ψ[1], xs[3]) - ∂(Ψ[3], xs[1]),
+            ∂(Ψ[2], xs[1]) - ∂(Ψ[1], xs[2]),
+        ]
+        u = already_divfree(TVT) ? curlΨ : curlΨ ./ ϱ
+    else
+        ξ = streamfunction(TVT;ufac = ufac, kwargs...)
+        if dim == 2 && (z in Symbolics.get_variables(ξ) || z in Symbolics.get_variables(ϱ))
+            error("test data with z-dependence (e.g. P11VortexVelocity, ExponentialZDensity) require dim = 3")
+        end
+        ## gradient of stream function (always in the (x,y)-plane)
+        ∇ξ = Symbolics.gradient(ξ, [x, y])
+        ## velocity u = curl ξ / ϱ
+        if already_divfree(TVT)
+            u2 = [-∇ξ[2], ∇ξ[1]]
+        else
+            u2 = [-∇ξ[2], ∇ξ[1]] ./ ϱ
+        end
+        ## in 3D the planar field is embedded (z-invariant) as u = (u1, u2, 0),
+        ## which is still exactly divergence-free
+        u = dim == 2 ? u2 : [u2[1], u2[2], 0 * x]
     end
-    ## in 3D the planar field is embedded (z-invariant) as u = (u1, u2, 0),
-    ## which is still exactly divergence-free
-    u = dim == 2 ? u2 : [u2[1], u2[2], 0 * x]
 
     ## gradient of velocity (row-major: [∇u_1, ∇u_2, (∇u_3)] matching grad(u) layout)
     ∇u = Symbolics.jacobian(u, xs)
