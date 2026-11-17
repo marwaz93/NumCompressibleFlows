@@ -21,8 +21,10 @@ abstract type ConstantVelocity <: TestVelocity end
 abstract type LinearVelocity <: TestVelocity end
 abstract type P7VortexVelocity <: TestVelocity end
 abstract type RigidBodyRotation <: TestVelocity end
+abstract type P11VortexVelocity <: TestVelocity end
 abstract type TrigVortexVelocity <: TestVelocity end
 abstract type EthierSteinmannVelocity <: TestVelocity end
+abstract type TaylorGreenVelocity <: TestVelocity end
 
 abstract type EOSType end
 abstract type IdealGasLaw <: EOSType end
@@ -109,12 +111,24 @@ streamfunction(::Type{<:ConstantVelocity};ufac = 1, kwargs...) = - ufac * y
 streamfunction(::Type{<:LinearVelocity};ufac = 1, kwargs...) = -  ufac * x * y
 streamfunction(::Type{<:P7VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2
 streamfunction(::Type{<:RigidBodyRotation};ufac = 1, kwargs...) = (ufac/2) * (x^2 + y^2)
+## 3D-only vortex (dim = 3): ξ = ufac ∏ (xᵢ²(xᵢ-1)²) vanishes with all first
+## derivatives on the cube boundary, and the embedded curl u = (-∂yξ, ∂xξ, 0)/ϱ
+## (see prepare_data) therefore vanishes on ∂Ω in every component
+streamfunction(::Type{<:P11VortexVelocity};ufac = 1, kwargs...) = ufac * x^2 * y^2 * (x - 1)^2 * (y - 1)^2 * z^2 * (z - 1)^2
 
 ## vector stream functions Ψ for genuinely 3D manufactured velocities
 ## u = curl Ψ / ϱ via the 3D curl (see prepare_data); ϱu = curl Ψ is exactly
 ## divergence-free. Default: not supported (only the 2D-curl `streamfunction` above)
 is_vector_stream(::Type{<:TestVelocity}) = false
 vector_streamfunction(::Type{<:TestVelocity}; kwargs...) = error("no vector stream function defined for this velocity type")
+
+## direct velocity prescription for compressive manufactured solutions: return
+## u = [u1, u2, (u3)] with u = 0 on the whole boundary but ∇·u ≠ 0 allowed, so
+## that the manufactured density source f_ϱ = ∇·(ϱu) does not vanish and closed
+## streamline characteristics acquire monodromy (unique steady density).
+## Default: not used (stream-function based construction)
+direct_velocity(::Type{<:TestVelocity}; kwargs...) = nothing
+uses_density_source(::Type{<:TestVelocity}) = false
 
 ## 3D trigonometric vortex (dim = 3): Ψ = (ufac/π)(cos πy, cos πz, cos πx), i.e.
 ## ϱu = curl Ψ = ufac (sin πz, sin πx, sin πy) with all three components nonzero.
@@ -162,6 +176,36 @@ vector_streamfunction(::Type{<:EthierSteinmannVelocity}; ufac = 1, a = pi/4, d =
     ethier_steinmann_potential(; a = a, d = d, ufac = ufac)
 is_vector_stream(::Type{<:EthierSteinmannVelocity}) = true
 
+## Taylor-Green vortex (dim = 3), the fully 3D classical array of
+## counter-rotating vortices of Taylor & Green (1937) in the quarter-period
+## shifted (workshop) form used on a cube with impermeable walls, see
+## https://en.wikipedia.org/wiki/Taylor–Green_vortex:
+##   rho u = (A sin(ax) cos(by) cos(cz), B cos(ax) sin(by) cos(cz),
+##           C cos(ax) cos(by) sin(cz)),  continuity: A + B + C = 0,
+## here a = b = c = pi on the unit cube and (A, B, C) = (ufac/pi)(1/2, 1/2, -1)
+## (the workshop case is A = -B, C = 0, with zero third component). Continuity
+## makes rho u exactly divergence-free, hence rho u = curl Psi with the
+## three-component vector potential Psi below (gauge p = 1; shifting the third
+## coefficient between the components only adds a gradient and leaves curl Psi
+## unchanged). All three components of the mass flux are nonzero, its normal
+## component vanishes on all six cube faces (the sin(pi .) of the own component
+## on the two faces normal to that direction) while the tangential velocity does
+## not: all faces are slip walls with inhomogeneous Dirichlet data, as for the
+## old z-invariant variant Psi = (0, 0, sss) - but since u_z = curl_3 Psi / ϱ! is
+## nonzero the closed horizontal vortex rings (and with them the kernel modes of
+## the upwind continuity operator and the pseudo-time concentration instability)
+## are gone: interior streamlines leave every horizontal plane and the discrete
+## steady density is unique. With ExponentialZDensity the velocity u = curl Psi/ϱ!
+## is compressive (∇⋅u != 0) while the density source ∇⋅(ϱu) = ∇⋅curl Psi vanishes
+## identically (legacy zero-source pipeline); mass is conserved since F.n = 0.
+vector_streamfunction(::Type{<:TaylorGreenVelocity}; ufac = 1, kwargs...) =
+    (ufac / pi^2) * [
+        1.5 * cos(pi * x) * sin(pi * y) * sin(pi * z),
+        0.5 * sin(pi * x) * cos(pi * y) * sin(pi * z),
+        sin(pi * x) * sin(pi * y) * cos(pi * z),
+    ]
+is_vector_stream(::Type{<:TaylorGreenVelocity}) = true
+
 already_divfree(::Type{<:TestVelocity}) = false
 already_divfree(::Type{<:RigidBodyRotation}) = true
 
@@ -172,6 +216,7 @@ inflow_regions(::Type{<:LinearVelocity}, gridtype) = [3]
 inflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [1,2]
 inflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [1,2]
+inflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
 ## TrigVortexVelocity (unit cube, regions 1:y=0,2:x=1,3:y=1,4:x=0,5:z=0,6:z=1):
 ## u ∝ (sin πz, sin πx, sin πy) >= 0 enters through x=0,y=0,z=0 and leaves through
 ## x=1,y=1,z=1; all six faces carry Dirichlet velocity data (none are walls)
@@ -180,14 +225,18 @@ inflow_regions(::Type{<:TrigVortexVelocity}, ::Type{<:UnitCube}) = [4,1,5]
 ## u ∝ v_ES enters through x=1,y=1,z=1 and leaves through x=0,y=0,z=0 (defaults a = pi/4,
 ## d = pi/2); all six faces carry nonzero Dirichlet velocity data (none are walls)
 inflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [2,3,6]
+## TaylorGreenVelocity: F.n = 0 on every face -> no inflow/outflow, all walls below
+inflow_regions(::Type{<:TaylorGreenVelocity}, gridtype) = []
 outflow_regions(::Type{<:ZeroVelocity}, gridtype) = []
 outflow_regions(::Type{<:ConstantVelocity}, gridtype) = [2]
 outflow_regions(::Type{<:ConstantVelocity}, ::Type{<:UnitCube}) = [2]
 outflow_regions(::Type{<:P7VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitSquare}) = [3,4]
 outflow_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [3,4]
+outflow_regions(::Type{<:P11VortexVelocity}, gridtype) = []
 outflow_regions(::Type{<:TrigVortexVelocity}, ::Type{<:UnitCube}) = [2,3,6]
 outflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [4,1,5]
+outflow_regions(::Type{<:TaylorGreenVelocity}, gridtype) = []
 
 ## boundary regions with u ⋅ n = 0 but (interpolated) Dirichlet velocity data
 ## (e.g. the z-faces of the unit cube for the z-invariant embedded vortices,
@@ -195,6 +244,11 @@ outflow_regions(::Type{<:EthierSteinmannVelocity}, ::Type{<:UnitCube}) = [4,1,5]
 wall_regions(::Type{<:TestVelocity}, gridtype) = Int[]
 wall_regions(::Type{<:P7VortexVelocity}, ::Type{<:UnitCube}) = [5,6]
 wall_regions(::Type{<:RigidBodyRotation}, ::Type{<:UnitCube}) = [5,6]
+## Taylor-Green vortex: ϱu ⋅ n = (curl Ψ) ⋅ n = 0 on every face (sin(pi .) of the
+## own flux component), tangential velocity nonzero -> all six faces are slip
+## walls with exact Dirichlet data
+wall_regions(::Type{<:TaylorGreenVelocity}, ::Type{<:UnitCube}) = [1, 2, 3, 4, 5, 6]
+
 
 
 angular_velocity(::Type{<:NoCoriolis}; kwargs...) = 0*x
@@ -235,7 +289,12 @@ function prepare_data(
     xs = dim == 2 ? [x, y] : [x, y, z]
     ∂(f, v) = (g = Symbolics.gradient(f, [v]); isempty(g) ? 0 * x : g[1])
 
-    if is_vector_stream(TVT)
+    dv = direct_velocity(TVT; ufac = ufac, kwargs...)
+    if dv !== nothing
+        ## directly prescribed (generally compressive) velocity
+        length(dv) == dim || error("direct_velocity must return $dim components")
+        u = [dv[i] for i in 1:dim]
+    elseif is_vector_stream(TVT)
         ## genuinely 3D velocity from the curl of a vector stream function Ψ:
         ## u = curl Ψ / ϱ, so that ϱu = curl Ψ is exactly divergence-free
         dim == 3 || error("vector stream functions (3D curl) require dim = 3")
@@ -359,7 +418,21 @@ function prepare_data(
 
     u!(result, qpinfo) = (u_eval(result, coords(qpinfo)...);)
     ∇u!(result, qpinfo) = (∇u_eval(result, coords(qpinfo)...);)
-    return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!
+
+    ## density source f_ϱ = ∇·(ϱu) for compressive test velocities; vanishes
+    ## identically for all stream-function based examples (left out there to
+    ## keep their discrete equations unchanged)
+    if uses_density_source(TVT)
+        s = sum(∂(ϱ * u[i], xs[i]) for i in 1:dim)
+        if dim == 2
+            s_eval = build_function(s, x, y, expression = Val{false})
+        else
+            s_eval = build_function(s, x, y, z, expression = Val{false})
+        end
+        src!(result, qpinfo) = (result[1] = s_eval(coords(qpinfo)...);)
+        return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, src!
+    end
+    return ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, nothing
 end
 
 

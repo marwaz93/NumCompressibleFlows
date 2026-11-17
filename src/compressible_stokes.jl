@@ -99,7 +99,7 @@ function run_incompressible!(data; kwargs...)
     ## prepare data with incompressible switch (ρ ≡ M, 1/c terms ignored)
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
     d = size(xgrid[Coordinates], 1)
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, ~ =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, convectiontype, incompressible = true, dim = d, kwargs...)
@@ -408,7 +408,7 @@ function run_single(data; kwargs...)
     ## prepare data and grid
     xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
     d = size(xgrid[Coordinates], 1)
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, kernel_src! =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, convectiontype, τfac, nrefs, dim = d, kwargs...)
@@ -486,7 +486,7 @@ function run_single(data; kwargs...)
     end
 
     ## prepare upwind flux storage
-    FluxIntegrator = ItemIntegrator([normalflux(1)]; quadorder = 2, entities = ON_FACES)
+    FluxIntegrator = ItemIntegrator([normalflux(1)]; quadorder = d, entities = ON_FACES)
     fluxes = zeros(Float64, 1, size(xgrid[FaceCells], 2))
 
     ## add convection term (dispatched by convectiontype)
@@ -537,6 +537,7 @@ function run_single(data; kwargs...)
     brho = nothing
     one_vector = nothing
     rowsums = nothing
+    srcvec = nothing
     sol = nothing
     rho_mean = M_exact / sum(xgrid[CellVolumes])
     
@@ -564,6 +565,8 @@ function run_single(data; kwargs...)
 
         fill!(D.entries.cscmatrix.nzval, 0)
         fill!(brho.entries, 0)
+        ## density source f_ϱ = ∇·(ϱu) (zero for solenoidal flux examples)
+        srcvec !== nothing && (brho.entries .+= srcvec.entries)
         
         if upwindtype === StandardUpwind
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
@@ -671,6 +674,13 @@ function run_single(data; kwargs...)
     brho     = FEVector(FES[2])
     one_vector = ones(Float64, size(D.entries, 1))
     rowsums  = zeros(Float64, size(D.entries, 1))
+    srcvec = if kernel_src! === nothing
+        nothing
+    else
+        srcfem = FEVector(FES[2])
+        assemble!(srcfem, LinearOperator(kernel_src!, [id(1)]; bonus_quadorder, kwargs...))
+        srcfem
+    end
 
     M_start  = sum(evaluate(MassIntegrator, sol))
     nonlinear_convection = !(convectiontype === NoConvection || convectiontype === OseenConvection)
@@ -712,7 +722,7 @@ function run_single(data; kwargs...)
     data["res_continuity"] = data["no_continuity_update"] ? 0 : residual(SC2)
 
     ## plot unicode plot
-    if length(sol.entries) < 1e5
+    if (length(sol.entries) < 1e5) && (d == 2)
         try
             ExtendableFEM.plot([id(u), id(ϱ)], sol; Plotter = UnicodePlots)
         catch err

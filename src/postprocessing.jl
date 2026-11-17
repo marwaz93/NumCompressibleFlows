@@ -5,7 +5,10 @@ Compute and store error norms (`Error(L2,u)`, `Error(H1,u)`, `Error(L2,ϱ)`,
 `Error(L2,ϱu)`, `Error(L2,uR)`, `Error(H1,u0)`, `Error(L2,div u)`,
 `Error(L2,div uR)`) in the given dict of a solved
 configuration and optionally compare against the incompressible reference
-solution (`run_incompressible!`). The dict must contain a `solution` key, e.g.
+solution (`run_incompressible!`). Also stores the plain interpolation errors of
+the exact solution (`Error(L2,u)_interp`, `Error(H1,u)_interp`,
+`Error(L2,ϱ)_interp`), i.e. the errors of the interpolated initial state.
+The dict must contain a `solution` key, e.g.
 as returned by `run_single` or by loading the corresponding JLD2 file.
 File IO (loading/saving via DrWatson) is left to the caller.
 """
@@ -42,7 +45,7 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
     convectiontype = data["convectiontype"]
     coriolistype   = data["coriolistype"]
 
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, ~ =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
                      ufac, dim = d, kwargs...)
@@ -134,6 +137,18 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
         data["Error(H1,u)"]  = sqrt(sum(error[d+1:n, :]))
         data["Error(L2,ϱ)"]  = sqrt(sum(error[n+1, :]))
         data["Error(L2,ϱu)"] = sqrt(sum(error[n+2:(d+1)^2, :]))
+
+        ## plain interpolation error of the exact solution (initial state of
+        ## run_single with initial_values = :interpolate), reference for the
+        ## discretization limit of the discrete steady state below
+        sentries = copy(sol.entries)
+        interpolate!(sol[u], u!; bonus_quadorder = data["bonus_quadorder"])
+        interpolate!(sol[ϱ], ϱ!; bonus_quadorder = data["bonus_quadorder"])
+        error_interp = evaluate(ErrorIntegratorExact, sol)
+        sol.entries .= sentries
+        data["Error(L2,u)_interp"] = sqrt(sum(error_interp[1:d, :]))
+        data["Error(H1,u)_interp"] = sqrt(sum(error_interp[d+1:n, :]))
+        data["Error(L2,ϱ)_interp"] = sqrt(sum(error_interp[n+1, :]))
 
         ## L2 error of the divergence: exact div u (from ∇u!) minus div u_h
         DivErrorIntegrator = ItemIntegrator(

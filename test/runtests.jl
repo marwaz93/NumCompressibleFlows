@@ -15,7 +15,7 @@ function manufactured_errors(; kwargs...)
                      gridtype = UnstructuredUnitSquare, nrefs = 2, maxsteps = 20; kwargs...)
     data = run_single(data)
 
-    ϱ!, ~, ~, u!, ∇u! = prepare_data(ConstantVelocity, ConstantDensity, data["eostype"];
+    ϱ!, ~, ~, u!, ∇u!, ~ = prepare_data(ConstantVelocity, ConstantDensity, data["eostype"];
                                      M = 1, c = 1, μ = 1, λ = 0, ufac = 1,
                                      pressure_in_f = true, others_in_f = true,
                                      convectiontype = data["convectiontype"])
@@ -86,7 +86,7 @@ function manufactured_errors_3d(; kwargs...)
     d = data["dim"]
     @test d == 3
 
-    ϱ!, ~, ~, u!, ∇u! = prepare_data(ConstantVelocity, ConstantDensity, data["eostype"];
+    ϱ!, ~, ~, u!, ∇u!, ~ = prepare_data(ConstantVelocity, ConstantDensity, data["eostype"];
                                      M = 1, c = 1, μ = 1, λ = 0, ufac = 1,
                                      pressure_in_f = true, others_in_f = true,
                                      convectiontype = data["convectiontype"], dim = 3)

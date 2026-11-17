@@ -22,7 +22,7 @@ using ColorTypes
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation, TrigVortexVelocity, EthierSteinmannVelocity
+export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation, P11VortexVelocity, TrigVortexVelocity, EthierSteinmannVelocity, TaylorGreenVelocity
 export is_vector_stream, vector_streamfunction, ethier_steinmann_velocity, ethier_steinmann_potential
 export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR, ExponentialZDensity
 export EOSType, IdealGasLaw, PowerLaw, gamma
