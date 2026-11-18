@@ -371,6 +371,16 @@ end
 # Core solver: run_single
 # ==============================================================================
 
+"""
+    run_single(data; kwargs...) -> Dict
+
+Solve the compressible Stokes/Oseen/Navier--Stokes configuration `data`
+(e.g. from `load_data`) on the grid of `data["gridtype"]` refined `data["nrefs"]`
+times, by fixed-point iteration between the momentum equation (linear solves
+with `method_linear`) and the pseudo-time-stepped upwind FVM continuity equation.
+Stores the `solution` and the residuals `res_momentum`, `res_continuity` in the
+same dict; error norms are computed by `compute_errors!`.
+"""
 function run_single(data; kwargs...)
     # -- problem parameters --
     μ      = data["μ"]

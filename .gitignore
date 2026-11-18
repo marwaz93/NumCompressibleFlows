@@ -1,0 +1,13 @@
+# Julia environment (kept out of tracking, see history "remove Manifest from tracking")
+/Manifest.toml
+
+# generated documentation
+docs/build/
+
+# DrWatson study outputs
+/data/
+/plots/
+
+# editor/agent tooling
+.vscode/
+.kilo/

@@ -1,0 +1,10 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+NumCompressibleFlows = "21fb45a5-abb4-49e7-b369-006a31dfd227"
+
+[sources]
+NumCompressibleFlows = {path = ".."}
+
+[compat]
+Documenter = "1"
+julia = "1.10"
