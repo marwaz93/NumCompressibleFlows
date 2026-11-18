@@ -10,3 +10,4 @@ docs/build/
 
 # editor/agent tooling
 .vscode/
+.kilo/
