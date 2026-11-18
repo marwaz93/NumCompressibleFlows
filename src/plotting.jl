@@ -357,7 +357,7 @@ function plot_convergencehistory(; nrefs = 1:6, Plotter = Plots, force = false, 
     xticks = log_ticks(reduce(vcat, [s.x for s in series]))
     xlabelv = xquantity === :h ? "mesh size h" : "degrees of freedom"
 
-    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
+    Plotter.plot(; show = true, size = (1000,1000), margin = 1Plots.cm, left_margin = (15, :mm), legendfontsize = 20, tickfontsize = 22, guidefontsize = 26, grid=true)
     for s in series
         Plotter.plot!(s.x, s.y; xscale = :log10, yscale = :log10, linewidth = 3,
             marker = :circle, markersize = 5, label = s.label, s.style...)

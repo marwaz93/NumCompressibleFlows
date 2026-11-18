@@ -1,6 +1,6 @@
 name = "NumCompressibleFlows"
 uuid = "21fb45a5-abb4-49e7-b369-006a31dfd227"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Marwa Zainelabdeen <marwa@wias-berlin.de>, Christian Merdon <merdon@wias-berlin.de>"]
 
 [deps]
