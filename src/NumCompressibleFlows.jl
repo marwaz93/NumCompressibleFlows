@@ -16,6 +16,7 @@ using LaTeXStrings
 using Latexify
 using Colors
 using ColorTypes
+using LinearSolve
 
 # global Symbolics variables for definition of exact solutions
 @variables x y z t

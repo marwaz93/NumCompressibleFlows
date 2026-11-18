@@ -23,6 +23,7 @@ const default_args = Dict(
     "reconstruct" => :RT, # choose from :RT :BDM :none
     "initial_values" => :interpolate, # choose from :interpolate, :stokes,
     "no_continuity_update" => false,
+    "method_linear" => UMFPACKFactorization(), # PardisoJL() fails above 2^31 nonzeros (Int32 indices), e.g. level 11
     # data of the problem
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
@@ -380,6 +381,9 @@ function run_single(data; kwargs...)
     pressure_stab  = data["pressure_stab"]
     bonus_quadorder = data["bonus_quadorder"]
     subiterations_momentum = data["subiterations_momentum"]
+    method_linear = data["method_linear"]
+    ## optional separate linear solver for the continuity equation (default: the same)
+    method_linear_continuity = get(data, "method_linear_continuity", method_linear)
 
     # -- data of the problem --
     velocitytype   = data["velocitytype"]
@@ -629,9 +633,9 @@ function run_single(data; kwargs...)
     M_start  = sum(evaluate(MassIntegrator, sol))
     nonlinear_convection = !(convectiontype === NoConvection || convectiontype === OseenConvection)
         maxiterations_momentum = subiterations_momentum == :auto ?  (nonlinear_convection ? 1 : 1) : subiterations_momentum
-    SC1 = SolverConfiguration(PD; init = sol, maxiterations = maxiterations_momentum,
+    SC1 = SolverConfiguration(PD; method_linear = method_linear, init = sol, maxiterations = maxiterations_momentum,
         target_residual, constant_matrix = true, kwargs...)
-    SC2 = SolverConfiguration(PDT; init = sol, maxiterations = 1,
+    SC2 = SolverConfiguration(PDT; method_linear = method_linear_continuity, init = sol, maxiterations = 1,
         target_residual, kwargs...)
    
    if data["no_continuity_update"]
