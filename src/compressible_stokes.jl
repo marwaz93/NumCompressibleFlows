@@ -210,7 +210,7 @@ end
 Dispatch on convectiontype to add the appropriate convection operator.
 """
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:StandardConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+                          ::Type{<:StandardConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_standardconvection_linearoperator!, [id_u],
         [id_u, grad(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -218,12 +218,12 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:OseenConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+                          ::Type{<:OseenConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, BilinearOperator(kernel_oseenconvection!(u!, ϱ!), [id_u], [grad(u)]; quadorder = 2*order + 2, store = true, factor = 1, kwargs...))
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:RotationForm}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+                          ::Type{<:RotationForm}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_rotationform_linearoperator!, [id_u, div_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -241,12 +241,14 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{NoConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+                          ::Type{NoConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
     nothing
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES,  kwargs...)
+                          ::Type{<:KarperConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES,  kwargs...)
+
+    d = size(xgrid[Coordinates], 1)
 
     # project current velocity to P0
     FES_P0 = FESpace{L2P0{size(xgrid[Coordinates], 1)}}(xgrid)
@@ -286,7 +288,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             
             if stab1[2] > 0
                 assemble!(bconv, LinearOperatorDG(
-                    velocity_jump_stab_kernel!(stab1[1], 3.0),
+                    velocity_jump_stab_kernel!(1 + (stab1[1]-1)/(d-1), γ),
                     [jump(id(1))], [jump(id(2)), average(id(3))];
                     factor = stab1[2]/2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
             end
@@ -304,7 +306,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
 end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
-                          ::Type{<:NewConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+                          ::Type{<:NewConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
     assign_operator!(PD, LinearOperator(
         kernel_new_rotationform_linearoperator!, [id_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
@@ -346,7 +348,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             
             if stab1[2] > 0
                 assemble!(bconv, LinearOperatorDG(
-                    velocity_jump_stab_kernel!(stab1[1], 3.0),
+                    velocity_jump_stab_kernel!(1 + (stab1[1]-1)/(d-1), γ),
                     [jump(id(1))], [jump(id(2)), average(id(3))];
                     factor = stab1[2]/2, entities = ON_IFACES, kwargs...), [args[1], args[2], u0[1]])
             end
@@ -490,7 +492,7 @@ function run_single(data; kwargs...)
     fluxes = zeros(Float64, 1, size(xgrid[FaceCells], 2))
 
     ## add convection term (dispatched by convectiontype)
-    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, xgrid, stab1, FluxIntegrator, fluxes, FES, kwargs...)
+    _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!, convectiontype, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
 
     ## boundary data and source terms
     assign_operator!(PD, LinearOperator(
@@ -608,7 +610,7 @@ function run_single(data; kwargs...)
         ## density jump stabilisation
         if stab1[2] > 0
             assemble!(D, BilinearOperatorDG(
-                density_jump_stab_kernel!(stab1[1], γ),
+                density_jump_stab_kernel!(1 + (stab1[1]-1)/(d-1), γ),
                 [jump(id(1))], [jump(id(1))], [average(id(1))];
                 factor = stab1[2], entities = ON_IFACES, bonus_quadorder = order, kwargs...), sol)
         end
