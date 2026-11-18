@@ -308,6 +308,8 @@ end
 
 function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{<:NewConvection}, order, xgrid, stab1, γ, FluxIntegrator, fluxes, FES, kwargs...)
+
+    d = size(xgrid[Coordinates], 1)
     assign_operator!(PD, LinearOperator(
         kernel_new_rotationform_linearoperator!, [id_u],
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
