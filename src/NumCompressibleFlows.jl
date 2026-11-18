@@ -22,8 +22,8 @@ using ColorTypes
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation, P11VortexVelocity, EthierSteinmannVelocity, TaylorGreenVelocity
-export is_vector_stream, vector_streamfunction, ethier_steinmann_velocity, ethier_steinmann_potential
+export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation, P11VortexVelocity, EthierSteinmanVelocity, TaylorGreenVelocity
+export is_vector_stream, vector_streamfunction, ethier_steinman_velocity, ethier_steinman_potential
 export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR, ExponentialZDensity
 export EOSType, IdealGasLaw, PowerLaw, gamma
 export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm, KarperConvection, NewConvection
@@ -75,13 +75,13 @@ export plot_single, plot_convergencehistory, plot_parameter_study
 ## problem: loading and saving grids leads to ElementGeometries -> DataType conversion (by DrWarson/JLD2?) which has to be reverted
 ## after loading (until this is fixed ina more elegant way)
 function repair_grid!(xgrid::ExtendableGrid)
-    xgrid[CellGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[CellGeometries][1], num_cells(xgrid))
-    xgrid[FaceGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[FaceGeometries][1], length(xgrid.components[FaceGeometries]))
-    xgrid[BFaceGeometries] = VectorOfConstants{ElementGeometries,Int}(xgrid.components[BFaceGeometries][1], length(xgrid.components[BFaceGeometries]))
+    xgrid[CellGeometries] = VectorOfConstants{ElementGeometries, Int}(xgrid.components[CellGeometries][1], num_cells(xgrid))
+    xgrid[FaceGeometries] = VectorOfConstants{ElementGeometries, Int}(xgrid.components[FaceGeometries][1], length(xgrid.components[FaceGeometries]))
+    xgrid[BFaceGeometries] = VectorOfConstants{ElementGeometries, Int}(xgrid.components[BFaceGeometries][1], length(xgrid.components[BFaceGeometries]))
 
     xgrid[UniqueCellGeometries] = Vector{ElementGeometries}([xgrid.components[CellGeometries][1]])
     xgrid[UniqueFaceGeometries] = Vector{ElementGeometries}([xgrid.components[FaceGeometries][1]])
-    xgrid[UniqueBFaceGeometries] = Vector{ElementGeometries}([xgrid.components[BFaceGeometries][1]])
+    return xgrid[UniqueBFaceGeometries] = Vector{ElementGeometries}([xgrid.components[BFaceGeometries][1]])
 end
 export repair_grid!
 
