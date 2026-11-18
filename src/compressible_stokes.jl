@@ -9,7 +9,10 @@ const default_args = Dict(
     "c" => 1,
     "M" => 1,
     # solving options
-    "τfac" => 4,
+    "τfac" => 4, # pseudo-time step τ = μ/(c·order²·M·τfac·ufac); on 3D tets the
+                 # fixed-point iteration slows down drastically for the 2D-default
+                 # τ ≈ 0.25 and destabilizes for τ ≳ 3 (mesh- and μ-independent,
+                 # empirical; the 3D study scripts therefore use τfac = 0.5, τ = 2)
     "ufac" => 1,
     "nrefs" => 4,
     "order" => 1,
@@ -24,6 +27,8 @@ const default_args = Dict(
     "initial_values" => :interpolate, # choose from :interpolate, :stokes,
     "no_continuity_update" => false,
     "method_linear" => UMFPACKFactorization(), # PardisoJL() fails above 2^31 nonzeros (Int32 indices), e.g. level 11
+    "mass_balance" => false, # add a uniform density source lambda to the continuity equation (discrete Lagrange multiplier for mass) so that the steady state carries exactly M_exact; all boundary data stay untouched
+    "mass_kappa" => 1.0, # relaxation factor with which the mass defect is removed per pseudo-time step (0 < mass_kappa <= 1)
     # data of the problem
     "velocitytype" => ZeroVelocity,
     "densitytype" => ExponentialDensity,
@@ -93,32 +98,34 @@ function run_incompressible!(data; kwargs...)
     stab1          = data["stab1"]
 
     ## prepare data with incompressible switch (ρ ≡ M, 1/c terms ignored)
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+    d = size(xgrid[Coordinates], 1)
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, ~ =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, convectiontype, incompressible = true, kwargs...)
-    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+                     ufac, convectiontype, incompressible = true, dim = d, kwargs...)
 
     ## in/outflow regions (same construction as in run_single)
     testgrid = NumCompressibleFlows.grid(gridtype; nref = 1)
     rinflow  = inflow_regions(velocitytype, gridtype)
     routflow = outflow_regions(velocitytype, gridtype)
-    rhom     = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
+    rwall    = wall_regions(velocitytype, gridtype)
+    rhom     = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow, rwall))
 
     ## define unknowns
-    u = Unknown("u"; name = "velocity", dim = 2)
+    u = Unknown("u"; name = "velocity", dim = d)
     p = Unknown("p"; name = "pressure", dim = 1)
     ϱ = Unknown("ϱ"; name = "density", dim = 1) # dummy, only referenced by convection kernels
 
     ## define FE types and reconstruction operator (same velocity space as run_single)
     if order == 1
-        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        FETypes = [H1BR{d}, L2P0{1}, L2P0{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{d} : reconstruct == :BDM ? HDIVBDM1{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
-        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        FETypes = [H1P2B{d, d}, L2P1{1}, L2P1{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{d} : reconstruct == :BDM ? HDIVBDM2{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     else
@@ -156,9 +163,9 @@ function run_incompressible!(data; kwargs...)
     if length(rhom) > 0
         assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
     end
-    if length(rinflow) > 0 || length(routflow) > 0
+    if length(rinflow) > 0 || length(routflow) > 0 || length(rwall) > 0
         assign_operator!(PD, InterpolateBoundaryData(
-            u, u!; bonus_quadorder, regions = union(rinflow, routflow), kwargs...))
+            u, u!; bonus_quadorder, regions = union(rinflow, routflow, rwall), kwargs...))
     end
 
     ## the problem is linear (convection kernels would use the exact u! and ϱ! = M);
@@ -172,12 +179,11 @@ function run_incompressible!(data; kwargs...)
 
     ## errors against exact solution (u = curl ξ / M, ϱ = M, p = 0 up to gauge)
     ErrorIntegratorExact = ItemIntegrator(
-        exact_error_incompressible!(u!, ∇u!, Float64(M)), [id(u), grad(u)];
-        resultdim = 6, quadorder = 10, kwargs...)
+        exact_error_incompressible!(u!, ∇u!, Float64(M); dim = d), [id(u), grad(u)];
+        resultdim = d + d*d, quadorder = 10, kwargs...)
     error = evaluate(ErrorIntegratorExact, sol)
-    data["Error(L2,u_inc)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
-    data["Error(H1,u_inc)"]  = sqrt(sum(error[3, :]) + sum(error[4, :]) +
-                                 sum(error[5, :]) + sum(error[6, :]))
+    data["Error(L2,u_inc)"]  = sqrt(sum(error[1:d, :]))
+    data["Error(H1,u_inc)"]  = sqrt(sum(error[d+1:d+d*d, :]))
 
     ## save data
     data["incompressible_solution"]  = sol
@@ -244,7 +250,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
                           ::Type{<:KarperConvection}, order, xgrid, stab1, FluxIntegrator, fluxes, FES,  kwargs...)
 
     # project current velocity to P0
-    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    FES_P0 = FESpace{L2P0{size(xgrid[Coordinates], 1)}}(xgrid)
     u0 = FEVector(FES_P0)    
     bconv = FEVector(FES_P0)
 
@@ -305,7 +311,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
         [id_u, curl2(u), id(ϱ)]; quadorder = 2*order + 1,
         factor = -1, kwargs...))
          # project current velocity to P0
-    FES_P0 = FESpace{L2P0{2}}(xgrid)
+    FES_P0 = FESpace{L2P0{size(xgrid[Coordinates], 1)}}(xgrid)
     u0 = FEVector(FES_P0)    
     bconv = FEVector(FES_P0)
 
@@ -318,7 +324,7 @@ function _add_convection!(PD, u, ϱ, id_u, grad, div_u, u!, ϱ!,
             if isnothing(T)
                 T = compute_lazy_interpolation_jacobian(FES_P0, args[1].FES)
             end
-            lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = input[1]^2+input[2]^2;), quadorder = 4)
+            lazy_interpolate!(u0[1], args, [id(1)]; postprocess = (result, input, qpinfo) -> (result[1] = sum(input[i]^2 for i in eachindex(input));), quadorder = 4)
 
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
             fill!(fluxes, 0)
@@ -404,30 +410,31 @@ function run_single(data; kwargs...)
     end
 
     ## prepare data and grid
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+    d = size(xgrid[Coordinates], 1)
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, kernel_src! =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, convectiontype, τfac, nrefs, kwargs...)
-    xgrid = NumCompressibleFlows.grid(gridtype; nref = nrefs)
+                     ufac, convectiontype, τfac, nrefs, dim = d, kwargs...)
 
     M_exact = integrate(xgrid, ON_CELLS, ϱ!, 1; quadorder = 30)
     τ = μ / (c * order^2 * M * τfac * ufac)
     @info "M = $M, M_exact = $M_exact τ = $τ"
 
     ## define unknowns
-    u = Unknown("u"; name = "velocity", dim = 2)
+    u = Unknown("u"; name = "velocity", dim = d)
     ϱ = Unknown("ϱ"; name = "density", dim = 1)
     p = Unknown("p"; name = "pressure", dim = 1)
 
     ## define FE types and reconstruction operator
     if order == 1
-        FETypes = [H1BR{2}, L2P0{1}, L2P0{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+        FETypes = [H1BR{d}, L2P0{1}, L2P0{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT0{d} : reconstruct == :BDM ? HDIVBDM1{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     elseif order == 2
-        FETypes = [H1P2B{2, 2}, L2P1{1}, L2P1{1}]
-        ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+        FETypes = [H1P2B{d, d}, L2P1{1}, L2P1{1}]
+        ReconstSpace = reconstruct == :RT ? HDIVRT1{d} : reconstruct == :BDM ? HDIVBDM2{d} : nothing
         id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
         div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
     end
@@ -439,8 +446,27 @@ function run_single(data; kwargs...)
     testgrid   = NumCompressibleFlows.grid(gridtype; nref = 1)
     rinflow    = inflow_regions(velocitytype, gridtype)
     routflow   = outflow_regions(velocitytype, gridtype)
-    rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow))
-    @info rinflow, routflow, rhom
+    rwall      = wall_regions(velocitytype, gridtype)
+    rhom       = setdiff(unique!(testgrid[BFaceRegions]), union(rinflow, routflow, rwall))
+    @info rinflow, routflow, rwall, rhom
+
+    ## mass balance correction: at the discrete steady state the inflow rate
+    ## (from the Dirichlet data rho!) and the outflow rate (upwind from rho_h)
+    ## always balance (row-sum identity of D), but the unique steady solution
+    ## of the upwind FVM still carries an O(h) mass defect: the defect is
+    ## accumulated during the pseudo-time transient while the density profile
+    ## relaxes. Since the steady solution is unique, exact mass preservation
+    ## requires one additional (O(h), consistency-preserving) term. If
+    ## requested, a uniform density source lambda is added to the continuity
+    ## equation, updated each pseudo-step so that the mass defect decays by
+    ## the factor (1 - mass_kappa); at the fixed point it acts as a discrete
+    ## Lagrange multiplier enforcing total mass = M_exact, while all boundary
+    ## data (Dirichlet inflow density rho!, outflow upwinding) remain untouched
+    mass_balance = get(data, "mass_balance", false)
+    mass_kappa = get(data, "mass_kappa", 1.0)
+    mass_lambda = Ref(0.0)
+    cell_vols = xgrid[CellVolumes]
+    total_vol = sum(cell_vols)
 
     ## define Stokes problem# name depending on convection type
     if convectiontype === NoConvection
@@ -464,7 +490,7 @@ function run_single(data; kwargs...)
     end
 
     ## prepare upwind flux storage
-    FluxIntegrator = ItemIntegrator([normalflux(1)]; quadorder = 2, entities = ON_FACES)
+    FluxIntegrator = ItemIntegrator([normalflux(1)]; quadorder = d, entities = ON_FACES)
     fluxes = zeros(Float64, 1, size(xgrid[FaceCells], 2))
 
     ## add convection term (dispatched by convectiontype)
@@ -476,9 +502,9 @@ function run_single(data; kwargs...)
     if length(rhom) > 0
         assign_operator!(PD, HomogeneousBoundaryData(u; regions = rhom, kwargs...))
     end
-    if length(rinflow) > 0 || length(routflow) > 0
+    if length(rinflow) > 0 || length(routflow) > 0 || length(rwall) > 0
         assign_operator!(PD, InterpolateBoundaryData(
-            u, u!; bonus_quadorder, regions = union(rinflow, routflow), kwargs...))
+            u, u!; bonus_quadorder, regions = union(rinflow, routflow, rwall), kwargs...))
     end
     if kernel_rhs! !== nothing
         assign_operator!(PD, LinearOperator(
@@ -515,6 +541,7 @@ function run_single(data; kwargs...)
     brho = nothing
     one_vector = nothing
     rowsums = nothing
+    srcvec = nothing
     sol = nothing
     rho_mean = M_exact / sum(xgrid[CellVolumes])
     
@@ -529,6 +556,11 @@ function run_single(data; kwargs...)
     * update inflow source vector `brho` and outflow matrix correction from boundary data
     * updates jump stabilisation on interior faces (`stab1`) and mean-density
       stabilisation pulling toward `rho_mean` (`stab2`)
+    * if `mass_balance`: adds a uniform source `lambda` (per unit volume) to
+      `brho` so that the total mass decays toward `M_exact` by the factor
+      `(1 - mass_kappa)` per pseudo-step (`lambda` balances inflow/outflow
+      rates and mass defect; at the fixed point it is the discrete Lagrange
+      multiplier enforcing mass conservation)
     * accumulates `A += τ·D`, `b += τ·brho` → implicit step `(I + τD)ϱ = b`
       with time-step `tau = min(V_cell / ‖rowsum(D)‖) / 2`
     """
@@ -537,6 +569,8 @@ function run_single(data; kwargs...)
 
         fill!(D.entries.cscmatrix.nzval, 0)
         fill!(brho.entries, 0)
+        ## density source f_ϱ = ∇·(ϱu) (zero for solenoidal flux examples)
+        srcvec !== nothing && (brho.entries .+= srcvec.entries)
         
         if upwindtype === StandardUpwind
             ## computes integrals of u ⋅ n on all faces and use them for upwinding
@@ -592,6 +626,21 @@ function run_single(data; kwargs...)
                 [id(1)]; factor = hmean^stab2[1]*rho_mean*stab2[2], kwargs...))
         end
 
+        ## mass balance correction: uniform source lambda (per unit volume) on
+        ## all cells such that the realized mass change of this pseudo-step
+        ## removes mass_kappa of the current mass defect, i.e.
+        ##   dM = tau * (in - out) + tau * lambda * |Omega| = -kappa * (M - M_exact)
+        ## interior upwind fluxes and jump stabilizations cancel in the row
+        ## sums, so sum(D * rho) is exactly the discrete outflow rate and
+        ## sum(brho) the discrete inflow rate at the current iterate
+        if mass_balance
+            M_now = dot(cell_vols, view(sol[ϱ]))
+            mul!(rowsums, D.entries, view(sol[ϱ]))
+            imb = sum(brho.entries) - sum(rowsums)
+            mass_lambda[] = (-mass_kappa * (M_now - M_exact) - tau * imb) / (tau * total_vol)
+            @. brho.entries += mass_lambda[] * cell_vols
+        end
+
         ExtendableFEMBase.add!(A, D.entries; factor = tau)
         b .+= tau * brho.entries
     end
@@ -629,6 +678,13 @@ function run_single(data; kwargs...)
     brho     = FEVector(FES[2])
     one_vector = ones(Float64, size(D.entries, 1))
     rowsums  = zeros(Float64, size(D.entries, 1))
+    srcvec = if kernel_src! === nothing
+        nothing
+    else
+        srcfem = FEVector(FES[2])
+        assemble!(srcfem, LinearOperator(kernel_src!, [id(1)]; bonus_quadorder, kwargs...))
+        srcfem
+    end
 
     M_start  = sum(evaluate(MassIntegrator, sol))
     nonlinear_convection = !(convectiontype === NoConvection || convectiontype === OseenConvection)
@@ -649,9 +705,15 @@ function run_single(data; kwargs...)
 
     ## calculate mass conservation
     Mend    = sum(evaluate(MassIntegrator, sol))
+    data["M_exact"] = M_exact
+    data["M_start"] = M_start
+    data["M_end"] = Mend
+    data["M_difference"] = M_start - Mend
+    mass_balance && (data["mass_lambda"] = mass_lambda[])
     @info "M_exact/M_start/M_end/difference = $(M_exact)/$M_start/$Mend/$(M_start-Mend)"
 
     ## save data
+    data["dim"]      = d
     data["ndofs"]    = length(sol.entries)
     data["nits"]     = nits
     data["solution"] = sol
@@ -664,7 +726,7 @@ function run_single(data; kwargs...)
     data["res_continuity"] = data["no_continuity_update"] ? 0 : residual(SC2)
 
     ## plot unicode plot
-    if length(sol.entries) < 1e5
+    if (length(sol.entries) < 1e5) && (d == 2)
         try
             ExtendableFEM.plot([id(u), id(ϱ)], sol; Plotter = UnicodePlots)
         catch err

@@ -5,7 +5,10 @@ Compute and store error norms (`Error(L2,u)`, `Error(H1,u)`, `Error(L2,ϱ)`,
 `Error(L2,ϱu)`, `Error(L2,uR)`, `Error(H1,u0)`, `Error(L2,div u)`,
 `Error(L2,div uR)`) in the given dict of a solved
 configuration and optionally compare against the incompressible reference
-solution (`run_incompressible!`). The dict must contain a `solution` key, e.g.
+solution (`run_incompressible!`). Also stores the plain interpolation errors of
+the exact solution (`Error(L2,u)_interp`, `Error(H1,u)_interp`,
+`Error(L2,ϱ)_interp`), i.e. the errors of the interpolated initial state.
+The dict must contain a `solution` key, e.g.
 as returned by `run_single` or by loading the corresponding JLD2 file.
 File IO (loading/saving via DrWatson) is left to the caller.
 """
@@ -24,6 +27,7 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
         u   = sol.tags[1]
         ϱ   = sol.tags[2]
         repair_grid!(sol[u].FES.xgrid)
+        d = haskey(data, "dim") ? data["dim"] : size(sol[u].FES.xgrid[Coordinates], 1)
     else
         @error "solution not found in data, cannot compute errors"
         return nothing
@@ -41,22 +45,22 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
     convectiontype = data["convectiontype"]
     coriolistype   = data["coriolistype"]
 
-    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u! =
+    ϱ!, kernel_gravity!, kernel_rhs!, u!, ∇u!, ~ =
         prepare_data(velocitytype, densitytype, eostype;
                      others_in_f, pressure_in_f, M, c, μ, λ, γ,
-                     ufac, kwargs...)
+                     ufac, dim = d, kwargs...)
     if compare_incompressible && (force_recompute || !haskey(data, "Error(L2,u-u_inc)"))
         if !haskey(data, "incompressible_solution")
             run_incompressible!(data; kwargs...)
         end
         sol_inc = data["incompressible_solution"]
-        diff_kernel = (result, input, qpinfo) -> (result .= (input[1] - input[3])^2 + (input[2] - input[4])^2)
+        diff_kernel = (result, input, qpinfo) -> (result .= sum((input[i] - input[d+i])^2 for i in 1:d))
         DiffIntegrator = ItemIntegrator(diff_kernel, [id(1), id(2)]; quadorder = 2 * (data["order"]+1), kwargs...)
         error_diff = evaluate(DiffIntegrator, [sol[u], sol_inc[1]])
         data["Error(L2,u-u_inc)"] = sqrt(sum(view(error_diff, :)))
         
     end
-    if force_recompute || !haskey(data, "Error(H1,u0)")
+    if d == 2 && (force_recompute || !haskey(data, "Error(H1,u0)"))
         @info "computing divergence-free part of u - u_h"
 
         ## compute error of divergence-free part by solving
@@ -115,6 +119,8 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
             sum(error0[1, :]) + sum(error0[2, :]) +
             sum(error0[3, :]) + sum(error0[4, :]))
         @info data["Error(H1,u0)"]
+    elseif d != 2
+        @warn "divergence-free projection error (Error(H1,u0)) is only available in 2D so far"
     else
         @info "skipping divergence-free error (already computed)"
     end
@@ -123,39 +129,51 @@ function compute_errors!(data; force_recompute = false, compare_incompressible =
         @info "computing errors of u, ϱ and ϱu"
         order = data["order"]
         ErrorIntegratorExact = ItemIntegrator(
-            exact_error!(u!, ∇u!, ϱ!), [id(u), grad(u), id(ϱ)];
-            resultdim = 9, quadorder = 10, kwargs...)
+            exact_error!(u!, ∇u!, ϱ!; dim = d), [id(u), grad(u), id(ϱ)];
+            resultdim = (d+1)^2, quadorder = 10, kwargs...)
         error = evaluate(ErrorIntegratorExact, sol)
-        data["Error(L2,u)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
-        data["Error(H1,u)"]  = sqrt(sum(error[3, :]) + sum(error[4, :]) +
-                                     sum(error[5, :]) + sum(error[6, :]))
-        data["Error(L2,ϱ)"]  = sqrt(sum(error[7, :]))
-        data["Error(L2,ϱu)"] = sqrt(sum(error[8, :]) + sum(error[9, :]))
+        n = d + d*d # row of the ϱ slot; error rows: [u(d), ∇u(d²), ϱ(1), ϱu(d)]
+        data["Error(L2,u)"]  = sqrt(sum(error[1:d, :]))
+        data["Error(H1,u)"]  = sqrt(sum(error[d+1:n, :]))
+        data["Error(L2,ϱ)"]  = sqrt(sum(error[n+1, :]))
+        data["Error(L2,ϱu)"] = sqrt(sum(error[n+2:(d+1)^2, :]))
+
+        ## plain interpolation error of the exact solution (initial state of
+        ## run_single with initial_values = :interpolate), reference for the
+        ## discretization limit of the discrete steady state below
+        sentries = copy(sol.entries)
+        interpolate!(sol[u], u!; bonus_quadorder = data["bonus_quadorder"])
+        interpolate!(sol[ϱ], ϱ!; bonus_quadorder = data["bonus_quadorder"])
+        error_interp = evaluate(ErrorIntegratorExact, sol)
+        sol.entries .= sentries
+        data["Error(L2,u)_interp"] = sqrt(sum(error_interp[1:d, :]))
+        data["Error(H1,u)_interp"] = sqrt(sum(error_interp[d+1:n, :]))
+        data["Error(L2,ϱ)_interp"] = sqrt(sum(error_interp[n+1, :]))
 
         ## L2 error of the divergence: exact div u (from ∇u!) minus div u_h
         DivErrorIntegrator = ItemIntegrator(
-            div_error!(u!, ∇u!), [div(u)]; resultdim = 1, quadorder = 10, kwargs...)
+            div_error!(u!, ∇u!; dim = d), [div(u)]; resultdim = 1, quadorder = 10, kwargs...)
         data["Error(L2,div u)"] = sqrt(sum(evaluate(DivErrorIntegrator, sol)))
 
         @assert reconstruct in [:none, :RT, :BDM]
         if data["reconstruct"] !== :none
             if order == 1
-                ReconstSpace = reconstruct == :RT ? HDIVRT0{2} : reconstruct == :BDM ? HDIVBDM1{2} : nothing
+                ReconstSpace = reconstruct == :RT ? HDIVRT0{d} : reconstruct == :BDM ? HDIVBDM1{d} : nothing
                 id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
                 div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
             elseif order == 2
-                ReconstSpace = reconstruct == :RT ? HDIVRT1{2} : reconstruct == :BDM ? HDIVBDM2{2} : nothing
+                ReconstSpace = reconstruct == :RT ? HDIVRT1{d} : reconstruct == :BDM ? HDIVBDM2{d} : nothing
                 id_u    = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Identity}) : id(u)
                 div_u   = ReconstSpace !== nothing ? apply(u, Reconstruct{ReconstSpace, Divergence}) : div(u)
             end
             ErrorIntegratorExactReconstruct = ItemIntegrator(
-                exact_error!(u!, ∇u!, ϱ!), [id_u, grad(u), id(ϱ)];
-                resultdim = 9, quadorder = 10, kwargs...)
+                exact_error!(u!, ∇u!, ϱ!; dim = d), [id_u, grad(u), id(ϱ)];
+                resultdim = (d+1)^2, quadorder = 10, kwargs...)
             error = evaluate(ErrorIntegratorExactReconstruct, sol)
-            data["Error(L2,uR)"]  = sqrt(sum(error[1, :]) + sum(error[2, :]))
+            data["Error(L2,uR)"]  = sqrt(sum(error[1:d, :]))
             ## L2 error of the divergence of the H(div)-conforming reconstruction
             DivErrorIntegratorReconstruct = ItemIntegrator(
-                div_error!(u!, ∇u!), [div_u]; resultdim = 1, quadorder = 10, kwargs...)
+                div_error!(u!, ∇u!; dim = d), [div_u]; resultdim = 1, quadorder = 10, kwargs...)
             data["Error(L2,div uR)"] = sqrt(sum(evaluate(DivErrorIntegratorReconstruct, sol)))
         end
     else

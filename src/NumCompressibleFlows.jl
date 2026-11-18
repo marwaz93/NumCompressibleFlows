@@ -3,6 +3,7 @@ module NumCompressibleFlows
 using ExtendableFEM
 using ExtendableGrids
 using Triangulate
+import TetGen
 using SimplexGridFactory
 using GridVisualize
 using Symbolics: Symbolics, @variables, build_function
@@ -22,14 +23,16 @@ using LinearSolve
 @variables x y z t
 
 include("problem_definitions.jl")
-export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation
-export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR
+export TestVelocity, P7VortexVelocity, ZeroVelocity, ConstantVelocity, LinearVelocity, RigidBodyRotation, P11VortexVelocity, EthierSteinmannVelocity, TaylorGreenVelocity
+export is_vector_stream, vector_streamfunction, ethier_steinmann_velocity, ethier_steinmann_potential
+export TestDensity, ConstantDensity, ExponentialDensity, LinearDensity, ExponentialDensityRBR, ExponentialZDensity
 export EOSType, IdealGasLaw, PowerLaw, gamma
 export ConvectionType, NoConvection, StandardConvection, OseenConvection, RotationForm, KarperConvection, NewConvection
 export UpwindType, StandardUpwind, PointwiseUpwind
 export CoriolisType, NoCoriolis, BetaPlaneApproximation
 export GridFamily, Mountain2D, UnitSquare, UnstructuredUnitSquare, UniformUnitSquare
-export inflow_regions, outflow_regions
+export UnitCube, UnstructuredUnitCube, dim
+export inflow_regions, outflow_regions, wall_regions
 export grid
 export prepare_data, run_single
 export default_args, load_data, run_incompressible!

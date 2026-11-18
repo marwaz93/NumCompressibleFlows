@@ -80,7 +80,9 @@ function setup_study!(studyname; plot_folders = [""])
         etype   = ("eostype",        "Law" => ""),  # carries γ, e.g. Power{1.4}
         gtype   = ("gridtype",       ["UnstructuredUnitSquare" => "SquareUnstruct",
                                       "UniformUnitSquare" => "SquareUniform",
-                                      "UnitSquare" => "Square"]),
+                                      "UnstructuredUnitCube" => "CubeUnstruct",
+                                      "UnitSquare" => "Square",
+                                      "UnitCube" => "Cube"]),
         ctype   = ("convectiontype", "Convection" => "Conv"),
         uptype  = ("upwindtype",     "Upwind" => "Upw"),
         cortype = ("coriolistype",   "Coriolis" => "Cor"),
@@ -121,6 +123,8 @@ function setup_study!(studyname; plot_folders = [""])
             :order => data["order"], :reconstruct => data["reconstruct"],
             :τfac => data["τfac"], :ufac => data["ufac"],
             :tres => data["target_residual"])
+        ## only deviating mass balance settings get a tag (keeps existing names)
+        get(data, "mass_balance", false) === true && push!(parts, :massbal => true)
         nrefs && push!(parts, :nrefs => data["nrefs"])
         return NamedTuple(filter(p -> String(p.first) != droptag, parts))
     end
