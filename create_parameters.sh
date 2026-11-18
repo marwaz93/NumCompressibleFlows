@@ -9,7 +9,7 @@ rm -f parameters_solve.txt parameters_plot.txt
 rm -rf log out err
 mkdir log out err
 
-examples=(p7vortex_powerlaw_3d rigidbodyrotation)
+examples=(p7vortex_powerlaw rigidbodyrotation)
 convectiontypes=(NoConvection StandardConvection OseenConvection RotationForm KarperConvection NewConvection)
 mu=(1 0.01)
 stab1=("(0.9,0)")
