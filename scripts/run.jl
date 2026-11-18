@@ -2,10 +2,10 @@
 # Command line entry point for the HTCondor jobs (see create_parameters.sh).
 # Arguments are key=value pairs, e.g.
 #
-#   julia --project=. scripts/run.jl mode=solve example=p7vortex_powerlaw \
+#   julia --project=. scripts/run.jl mode=solve example=p7vortex_powerlaw_3d \
 #       convectiontype=OseenConvection mu=0.01 "stab1=(0.9,0)" "stab2=(1.5,0)" nrefs=9
 #
-#   julia --project=. scripts/run.jl mode=plot example=p7vortex_powerlaw \
+#   julia --project=. scripts/run.jl mode=plot example=p7vortex_powerlaw_3d \
 #       convectiontypes=NoConvection+OseenConvection mu=0.01 "stab1=(0.9,0)" "stab2=(1.5,0)" nrefs=1:9
 #
 # mode=solve computes (or loads) one refinement level of one configuration and
@@ -28,12 +28,6 @@ using Plots
 # ============================
 
 const EXAMPLES = Dict(
-    "p7vortex_powerlaw" => (
-        velocitytype = P7VortexVelocity,
-        densitytype = ExponentialDensity,
-        eostype = PowerLaw{1.4},
-        gridtype = UnstructuredUnitSquare,
-    ),
     "p7vortex_powerlaw_3d" => (
         velocitytype = P7VortexVelocity,
         densitytype = ExponentialDensity,
